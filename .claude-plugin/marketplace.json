@@ -1,0 +1,22 @@
+{
+  "name": "ikeisuke-skills",
+  "owner": {
+    "name": "ikeisuke",
+    "email": "keisuke@reirou.jp"
+  },
+  "metadata": {
+    "description": "Custom Claude Code skills by ikeisuke",
+    "version": "0.0.1"
+  },
+  "plugins": [
+    {
+      "name": "tools",
+      "description": "Utility skills for Claude Code workflows",
+      "source": "./",
+      "strict": false,
+      "skills": [
+        "./skills/git-attribution"
+      ]
+    }
+  ]
+}
