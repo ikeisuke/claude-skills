@@ -1,42 +1,38 @@
 ---
 name: session-title
-description: "macOS専用: Sets terminal tab title and iTerm2 badge for AI-DLC session identification. Use at step 1.5 (Inception) or step 2.6 (Construction/Operations) of each AI-DLC phase. Also use when the user says \"セッションタイトル\", \"set session title\", or \"session-title\". Requires macOS (uses osascript). On non-macOS, silently skipped."
-argument-hint: <project_name> <phase> <cycle>
+description: >
+  macOS専用: Set terminal tab title and iTerm2 badge for session identification.
+  Use when the user says "セッションタイトル", "set session title", "session-title",
+  or wants to label the current terminal session. Requires macOS (uses osascript).
+  On non-macOS, silently skipped.
+argument-hint: <label1> <label2> <label3>
 ---
 
-# Session Title（macOS専用）
+# Session Title (macOS)
 
-ターミナルのタブタイトルとiTerm2バッジを設定し、複数セッションの判別を容易にする。
+Set terminal tab title and iTerm2 badge to identify sessions.
 
-**動作環境**: macOS のみ。osascript（Apple Events）を使用するため、Linux/Windows環境では動作しない（エラーにはならずスキップされる）。
+## Usage
 
-## 実行方法
-
-1. 引数を決定する:
-   - `project_name`: `docs/aidlc.toml` の `[project].name`、取得失敗時はディレクトリ名
-   - `phase`: 現在のフェーズ名（`Inception` / `Construction` / `Operations`）
-   - `cycle`: サイクルバージョン（`current_branch` から抽出、不明時は `unknown`）
-
-2. スクリプトを探索して実行する:
+Run the bundled script with up to 3 labels. The title is displayed as `label1 / label2 / label3`.
 
 ```bash
-if [ -x "prompts/package/skills/session-title/bin/aidlc-session-title.sh" ]; then
-  bash prompts/package/skills/session-title/bin/aidlc-session-title.sh "$PROJECT_NAME" "$PHASE" "$CYCLE"
-elif [ -x "docs/aidlc/skills/session-title/bin/aidlc-session-title.sh" ]; then
-  bash docs/aidlc/skills/session-title/bin/aidlc-session-title.sh "$PROJECT_NAME" "$PHASE" "$CYCLE"
-fi
+bash skills/session-title/bin/session-title.sh "ProjectName" "Task" "Branch"
 ```
 
-- 各引数は必ず二重引用符で囲む
-- コマンド内に `$()` を使用しない（AIが値を事前に解決してから組み立てる）
-- エラー時はスキップして続行（フロー停止しない）
+Determine labels from context:
+- **label1**: Project or repo name (directory name as fallback)
+- **label2**: Current task or phase
+- **label3**: Branch name or other identifier
 
-## 対応環境
+All arguments must be quoted. On error, skip silently (never block workflow).
 
-**macOS専用**。Linux/Windowsでは全機能がスキップされる（exit 0）。
+## Supported Terminals (macOS only)
 
-| ターミナル（macOS） | タブタイトル | 背景バッジ |
-|-------------------|------------|-----------|
-| iTerm2 | osascript | iTerm2エスケープシーケンス |
-| Terminal.app | osascript | 非対応 |
-| その他（macOS） | TTY直接書き込み | 非対応 |
+| Terminal | Tab Title | Badge |
+|----------|-----------|-------|
+| iTerm2 | osascript | iTerm2 escape sequence |
+| Terminal.app | osascript | Not supported |
+| Other (macOS) | TTY escape sequence | Not supported |
+
+Non-macOS environments: silently exits 0.

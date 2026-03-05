@@ -1,9 +1,9 @@
 #!/bin/bash
-# AI-DLC Session Title Script (macOS only)
+# Session Title Script (macOS only)
 # Sets terminal tab title and iTerm2 badge for session identification.
 # Uses osascript (Apple Events) - requires macOS.
 # On non-macOS, silently exits 0.
-# Usage: aidlc-session-title.sh <project_name> <phase> <cycle>
+# Usage: session-title.sh <label1> <label2> <label3>
 # Always exits 0 (non-blocking).
 
 # macOS check
@@ -11,15 +11,18 @@ if [ "$(uname -s)" != "Darwin" ]; then
   exit 0
 fi
 
-PROJECT_NAME="${1:-}"
-PHASE="${2:-}"
-CYCLE="${3:-}"
+LABEL1="${1:-}"
+LABEL2="${2:-}"
+LABEL3="${3:-}"
 
-if [ -z "$PROJECT_NAME" ] || [ -z "$PHASE" ] || [ -z "$CYCLE" ]; then
+if [ -z "$LABEL1" ]; then
   exit 0
 fi
 
-TITLE="$PROJECT_NAME / $PHASE / $CYCLE"
+# Build title from non-empty labels
+TITLE="$LABEL1"
+[ -n "$LABEL2" ] && TITLE="$TITLE / $LABEL2"
+[ -n "$LABEL3" ] && TITLE="$TITLE / $LABEL3"
 
 # --- Find parent TTY device ---
 get_parent_tty() {
