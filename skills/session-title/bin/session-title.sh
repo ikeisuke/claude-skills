@@ -43,20 +43,13 @@ get_parent_tty() {
 # --- Set title based on terminal ---
 case "${TERM_PROGRAM:-}" in
   iTerm.app)
-    # Tab title via osascript (on run argv to prevent injection)
-    osascript - "$TITLE" <<'APPLESCRIPT' 2>/dev/null
-on run argv
-  tell application "iTerm2"
-    tell current session of current tab of current window
-      set name to item 1 of argv
-    end tell
-  end tell
-end run
-APPLESCRIPT
-
-    # Badge via iTerm2 escape sequence to parent TTY
+    # Tab title and badge via escape sequences to parent TTY
+    # (osascript targets the "current" focused tab, not necessarily this session's tab)
     PARENT_TTY=$(get_parent_tty)
     if [ -n "$PARENT_TTY" ] && [ -w "$PARENT_TTY" ]; then
+      # Tab title via standard escape sequence
+      printf '\033]0;%s\007' "$TITLE" > "$PARENT_TTY" 2>/dev/null
+      # Badge via iTerm2 proprietary escape sequence
       BADGE=$(printf '%s' "$TITLE" | base64 | tr -d '\r\n')
       printf "\033]1337;SetBadgeFormat=%s\007" "$BADGE" > "$PARENT_TTY" 2>/dev/null
     fi
