@@ -31,7 +31,7 @@ All arguments must be quoted. On error, skip silently (never block workflow).
 
 | Terminal | Tab Title | Badge |
 |----------|-----------|-------|
-| iTerm2 | osascript | iTerm2 escape sequence |
+| iTerm2 | TTY escape sequence | iTerm2 escape sequence |
 | Terminal.app | osascript | Not supported |
 | Other (macOS) | TTY escape sequence | Not supported |
 

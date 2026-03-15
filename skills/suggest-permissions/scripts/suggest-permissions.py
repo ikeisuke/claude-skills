@@ -16,6 +16,14 @@ SAFE_TOOLS = {"Glob", "Grep", "WebSearch"}
 # File tools that need scope-based analysis
 FILE_TOOLS = {"Read", "Edit", "Write"}
 
+# Bash commands that must never be auto-allowed (arbitrary code execution or shell constructs)
+NEVER_ALLOW_COMMANDS = {
+    # Script interpreters
+    "node", "python3", "python", "ruby", "perl", "bash", "sh", "deno", "bun",
+    # Shell control structures (wrap arbitrary commands)
+    "for", "if", "while", "case", "eval",
+}
+
 
 def parse_args():
     parser = argparse.ArgumentParser(
@@ -118,6 +126,18 @@ def generate_file_rule(tool_name, scope, directory=None):
 def generate_bash_rule(pattern):
     """Generate a Bash allow rule from a command pattern."""
     return f"Bash({pattern} *)"
+
+
+def is_never_allow(rule):
+    """Check if a rule matches a never-auto-allow command."""
+    match = re.match(r"^Bash\((\S+)", rule)
+    if not match:
+        return False
+    cmd = match.group(1)
+    # Strip leading backslash (e.g., \rm -> rm)
+    if cmd.startswith("\\"):
+        cmd = cmd[1:]
+    return cmd in NEVER_ALLOW_COMMANDS
 
 
 def load_current_allow_rules():
@@ -291,6 +311,7 @@ def main():
             "rule": rule,
             "count": count,
             "already_allowed": already,
+            "never_allow": is_never_allow(rule),
             "examples": rule_examples.get(rule, []),
         })
 
@@ -317,9 +338,18 @@ def main():
     print("-" * 110)
 
     for i, s in enumerate(suggestions, 1):
-        status = "[OK]" if s["already_allowed"] else f"[{i:>2}]"
+        if s["already_allowed"]:
+            status = "[OK]"
+        elif s.get("never_allow"):
+            status = "[!!]"
+        else:
+            status = f"[{i:>2}]"
         examples_str = " | ".join(ex[:40] for ex in s["examples"][:2])
         print(fmt.format(status, s["count"], s["rule"][:50], examples_str))
+
+    never_count = sum(1 for s in suggestions if s.get("never_allow"))
+    if never_count:
+        print(f"\n[!!] = never auto-allow ({never_count} patterns) — use 'ask' or leave default")
 
     new_count = sum(1 for s in suggestions if not s["already_allowed"])
     print(f"\nTotal: {len(suggestions)} patterns, {new_count} new (not yet in allow list)")
