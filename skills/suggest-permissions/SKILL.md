@@ -14,17 +14,31 @@ Analyze tool usage from session history and suggest `permissions.allow` rules.
 
 ## Step 1: Collect usage data
 
-Run the script to collect tool usage patterns. Pass user arguments directly.
+Run the script to collect tool usage patterns. **絶対パスで実行すること**（`cd` + 相対パスだと allow ルールにマッチしない）。
 
 ```bash
-python3 skills/suggest-permissions/scripts/suggest-permissions.py [OPTIONS]
+python3 /path/to/skills/suggest-permissions/scripts/suggest-permissions.py [OPTIONS]
 ```
+
+スキルの Base directory からスクリプトの絶対パスを組み立てる。
+
+### --project のデフォルト
+
+ユーザーが `--project` を明示していない場合、カレントディレクトリのリポジトリ名を自動で `--project` に渡す：
+
+```bash
+# リポジトリ名を取得
+git rev-parse --show-toplevel  # → basename を --project に使用
+```
+
+全プロジェクト横断で集計したい場合はユーザーが `--project all` を明示する。
+`--project all` が指定された場合は `--project` を付けずにスクリプトを実行する。
 
 Options:
 
 | Flag | Description | Default |
 |------|-------------|---------|
-| `--project <name>` | Project name filter (substring) | All |
+| `--project <name>` | Project name filter (substring) | Current repo name |
 | `--session <id>` | Session ID filter | All |
 | `--days <N>` | Look back N days | 30 |
 | `--tool <name>` | Tool name filter (case-insensitive) | All |
