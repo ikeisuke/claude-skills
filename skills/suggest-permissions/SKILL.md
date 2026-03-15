@@ -182,20 +182,49 @@ Group rules by risk level and present:
 2. **MED** → `allow` or `ask` をユーザー判断で提案
 3. **HIGH** → `ask`（確認付き許可）or `deny`（完全ブロック）を提案。ワイルドカードで allow する場合は危険フラグを `ask`/`deny` でガードすること
 
-Provide a ready-to-use JSON snippet for `~/.claude/settings.local.json` containing only the rules the user approves.
+### 設定ファイルの振り分け
 
+ルールを **グローバル** (`~/.claude/settings.local.json`) と **プロジェクト** (`.claude/settings.local.json`) に振り分けて出力すること。
+
+| 振り分け基準 | 設定先 | 例 |
+|-------------|--------|-----|
+| どのプロジェクトでも使う汎用コマンド | グローバル | `Bash(ls:*)`, `Bash(git status *)`, `Glob`, `Grep` |
+| プロジェクト固有のスクリプト・ツール | プロジェクト | `Bash(npm run *)`, `Bash(cargo *)`, `Bash(bin/*)` |
+| プロジェクト固有のパス指定 | プロジェクト | `Bash(docs/aidlc/bin/*)`, `Read(/**)`  |
+| ファイルツール（スコープ付き） | スコープによる | `Read(///tmp/**)` → グローバル、`Edit(/**)`(プロジェクト相対) → プロジェクト |
+| MCP ツール | プロジェクト | `mcp__codex__codex` |
+
+既存のグローバル/プロジェクト設定がある場合はそれぞれ読み込んで、重複を除外すること。
+
+### 出力フォーマット
+
+JSON スニペットを設定先ごとに分けて出力する：
+
+**グローバル** (`~/.claude/settings.local.json`):
 ```json
 {
   "permissions": {
     "deny": [],
-    "ask": ["Bash(git push --force *)", "Bash(git branch -D *)"],
+    "ask": ["Bash(git push --force *)", "Bash(rm *)"],
     "allow": [
-      "Read",
       "Glob",
       "Grep",
-      "Bash(ls *)",
+      "Bash(ls:*)",
       "Bash(git status *)",
       "Bash(git branch *)"
+    ]
+  }
+}
+```
+
+**プロジェクト** (`.claude/settings.local.json`):
+```json
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm run *)",
+      "Bash(bin/*)",
+      "mcp__codex__codex"
     ]
   }
 }

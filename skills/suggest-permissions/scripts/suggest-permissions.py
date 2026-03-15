@@ -154,11 +154,11 @@ def is_never_allow(rule):
     return cmd in NEVER_ALLOW_COMMANDS
 
 
-def load_current_allow_rules():
-    """Load current allow rules from all settings files."""
+def load_allow_rules_from(directory):
+    """Load allow rules from settings files in a directory."""
     rules = set()
     for name in ("settings.json", "settings.local.json"):
-        path = Path.home() / ".claude" / name
+        path = Path(directory) / name
         if path.exists():
             try:
                 data = json.loads(path.read_text())
@@ -167,6 +167,17 @@ def load_current_allow_rules():
             except (json.JSONDecodeError, OSError):
                 pass
     return rules
+
+
+def load_current_allow_rules(cwd=None):
+    """Load current allow rules from global and project settings files."""
+    global_rules = load_allow_rules_from(Path.home() / ".claude")
+    project_rules = set()
+    if cwd:
+        project_settings_dir = Path(cwd) / ".claude"
+        if project_settings_dir.exists():
+            project_rules = load_allow_rules_from(project_settings_dir)
+    return global_rules | project_rules
 
 
 def is_already_allowed(rule, existing_rules):
@@ -310,8 +321,9 @@ def main():
             if len(rule_examples[rule]) < 5:
                 rule_examples[rule].append(json.dumps(inp, ensure_ascii=False)[:120])
 
-    # Load existing rules
-    existing_rules = load_current_allow_rules()
+    # Load existing rules (global + project)
+    cwd = os.getcwd()
+    existing_rules = load_current_allow_rules(cwd)
 
     # Build suggestions
     suggestions = []
@@ -340,10 +352,18 @@ def main():
     # Table format
     print(f"Tool usage patterns (last {args.days} days, min {args.min_count} uses):\n")
 
-    # Current allow rules
-    if existing_rules:
-        print("Current allow rules:")
-        for r in sorted(existing_rules):
+    # Current allow rules (show global and project separately)
+    global_rules = load_allow_rules_from(Path.home() / ".claude")
+    project_settings_dir = Path(cwd) / ".claude"
+    project_rules = load_allow_rules_from(project_settings_dir) if project_settings_dir.exists() else set()
+    if global_rules:
+        print("Current allow rules (global: ~/.claude/):")
+        for r in sorted(global_rules):
+            print(f"  {r}")
+        print()
+    if project_rules:
+        print("Current allow rules (project: .claude/):")
+        for r in sorted(project_rules):
             print(f"  {r}")
         print()
 
