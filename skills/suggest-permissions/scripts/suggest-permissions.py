@@ -66,6 +66,20 @@ def extract_bash_pattern(command):
     if base.startswith("\\"):
         base = base[1:]
 
+    # Variable assignment (e.g., VAR=$(cmd ...), VAR="$(cmd ...)")
+    # Permission rules can't contain $() due to parentheses parsing,
+    # so extract the inner command instead.
+    if "=" in base:
+        rhs = first_line.split("=", 1)[1].strip()
+        # Strip optional quotes and $(
+        rhs = rhs.lstrip('"\'')
+        if rhs.startswith("$("):
+            inner = rhs[2:].rstrip(")").strip()
+            if inner:
+                # Re-parse inner command
+                return extract_bash_pattern(inner)
+        return None
+
     # For commands with subcommands, include the subcommand
     if len(parts) >= 2 and base in (
         "git", "gh", "npm", "npx", "yarn", "pnpm", "cargo", "go", "docker",

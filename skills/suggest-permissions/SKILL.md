@@ -109,6 +109,13 @@ Evaluate each rule candidate against these dimensions:
 }
 ```
 
+### Variable assignment commands
+
+`VAR=$(command ...)` 形式のコマンドはパーミッションルールの `Bash(...)` 構文と括弧が衝突するため、ルールとして記述できない。
+スクリプトは `$()` 内のコマンドを自動的に抽出してルール候補にする（例: `TMPFILE=$(mktemp /tmp/foo.XXXXX)` → `Bash(mktemp *)`）。
+
+変数代入で始まるコマンドは個別ルールではカバーされないため、都度確認となる。
+
 ### Wildcard overmatch warning
 
 `Bash(command *)` は全フラグ・引数を許可する。同一コマンドでも特定フラグで危険度が大きく変わるものがある。
