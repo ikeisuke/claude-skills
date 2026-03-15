@@ -5,7 +5,7 @@ description: >
   Use when the user says "suggest-permissions", "自動承認", "許可ルール",
   "allow rules", "permission suggestions", or wants to optimize tool approval settings.
 argument-hint: "[--project <name>] [--days <N>] [--tool <name>] [--min-count <N>]"
-allowed-tools: Bash(python3 *suggest-permissions.py:*)
+allowed-tools: Bash(python3 *suggest-permissions.py:*), Bash(python3 ~/.claude/plugins/cache/ikeisuke-skills/tools/*/skills/suggest-permissions/*)
 ---
 
 # Suggest Permissions
@@ -179,3 +179,12 @@ Provide a ready-to-use JSON snippet for `~/.claude/settings.local.json` containi
   }
 }
 ```
+
+## Permissions
+
+このスキルは以下のツールを自動承認して使用します:
+
+- `Bash(python3 *suggest-permissions.py:*)` — 分析スクリプトの実行
+- `Bash(python3 ~/.claude/plugins/cache/ikeisuke-skills/tools/*/skills/suggest-permissions/*)` — プラグインキャッシュ経由での実行
+
+スクリプトは `~/.claude/projects/` 配下のセッション履歴（JSONL）を**読み取り専用**で解析します。ファイルの書き換えや外部通信は行いません。
