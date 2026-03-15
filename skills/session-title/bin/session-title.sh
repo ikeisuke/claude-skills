@@ -55,14 +55,11 @@ case "${TERM_PROGRAM:-}" in
     fi
     ;;
   Apple_Terminal)
-    # Tab title via osascript (on run argv to prevent injection)
-    osascript - "$TITLE" <<'APPLESCRIPT' 2>/dev/null
-on run argv
-  tell application "Terminal"
-    set custom title of front window to item 1 of argv
-  end tell
-end run
-APPLESCRIPT
+    # Tab title via escape sequence to parent TTY (avoids front-window mismatch)
+    PARENT_TTY=$(get_parent_tty)
+    if [ -n "$PARENT_TTY" ] && [ -w "$PARENT_TTY" ]; then
+      printf '\033]0;%s\007' "$TITLE" > "$PARENT_TTY" 2>/dev/null
+    fi
     ;;
   *)
     # Fallback: write escape sequence to parent TTY
