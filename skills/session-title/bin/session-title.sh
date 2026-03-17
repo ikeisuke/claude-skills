@@ -49,8 +49,13 @@ case "${TERM_PROGRAM:-}" in
     if [ -n "$PARENT_TTY" ] && [ -w "$PARENT_TTY" ]; then
       # Tab title via standard escape sequence
       printf '\033]0;%s\007' "$TITLE" > "$PARENT_TTY" 2>/dev/null
-      # Badge via iTerm2 proprietary escape sequence
-      BADGE=$(printf '%s' "$TITLE" | base64 | tr -d '\r\n')
+      # Badge via iTerm2 proprietary escape sequence (newline-separated)
+      BADGE_TEXT="$LABEL1"
+      [ -n "$LABEL2" ] && BADGE_TEXT="$BADGE_TEXT
+$LABEL2"
+      [ -n "$LABEL3" ] && BADGE_TEXT="$BADGE_TEXT
+$LABEL3"
+      BADGE=$(printf '%s' "$BADGE_TEXT" | base64 | tr -d '\r\n')
       printf "\033]1337;SetBadgeFormat=%s\007" "$BADGE" > "$PARENT_TTY" 2>/dev/null
     fi
     ;;
