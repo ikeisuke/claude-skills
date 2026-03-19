@@ -4,8 +4,8 @@ description: >
   Suggest permission auto-approval rules based on session history with risk assessment.
   Use when the user says "suggest-permissions", "自動承認", "許可ルール",
   "allow rules", "permission suggestions", or wants to optimize tool approval settings.
-argument-hint: "[--project <name>] [--days <N>] [--tool <name>] [--min-count <N>]"
-allowed-tools: Bash(python3 *suggest-permissions.py:*), Bash(python3 ~/.claude/plugins/cache/ikeisuke-skills/tools/*/skills/suggest-permissions/*)
+argument-hint: "[--project <name>] [--days <N>] [--tool <name>] [--min-count <N>] [--consolidate <ghq-prefix>...]"
+allowed-tools: Bash(python3 *suggest-permissions.py:*), Bash(python3 ~/.claude/plugins/cache/ikeisuke-skills/tools/*/skills/suggest-permissions/*), Bash(ghq *)
 ---
 
 # Suggest Permissions
@@ -230,11 +230,64 @@ JSON スニペットを設定先ごとに分けて出力する：
 }
 ```
 
+## Consolidate モード（複数リポジトリの共通ルール抽出）
+
+`--consolidate` を使うと、ghq 管理下の複数リポジトリから共通の許可ルールを抽出し、グローバル設定への昇格を提案する。
+
+```bash
+python3 /path/to/scripts/suggest-permissions.py --consolidate <ghq-prefix> [<ghq-prefix>...] [--min-repos <N>] [--format table|json]
+```
+
+### 引数
+
+| Flag | Description | Default |
+|------|-------------|---------|
+| `--consolidate` | ghq prefix。org名、ユーザー名、`github.com/org` など。複数指定可 | — |
+| `--min-repos` | 共通とみなす最低リポジトリ数 | 2 |
+| `--format` | `table` or `json` | table |
+
+### 使用例
+
+```bash
+# ユーザー名で絞り込み
+python3 suggest-permissions.py --consolidate ikeisuke
+
+# 3リポジトリ以上で共通のルールのみ
+python3 suggest-permissions.py --consolidate ikeisuke --min-repos 3
+
+# 複数 prefix を指定
+python3 suggest-permissions.py --consolidate ikeisuke myorg
+
+# JSON 出力
+python3 suggest-permissions.py --consolidate ikeisuke --format json
+```
+
+### 動作
+
+1. `ghq root` + `ghq list <prefix>` で対象リポジトリを列挙
+2. 各リポジトリの `.claude/settings.json` / `.claude/settings.local.json` から allow ルールを読み込み
+3. `--min-repos` 以上のリポジトリに存在するルールを抽出（既にグローバルにあるルールは除外）
+4. never-auto-allow チェックを適用（`[!!]` マーク）
+5. グローバルへの昇格候補と、昇格後にプロジェクトから削除可能なルールを表示
+
+### 出力の見方
+
+- **Common project rules** テーブル: 共通ルール一覧。`REPOS` 列は「該当リポ数/全リポ数」
+- **Suggested global additions**: グローバルに追加すべきルール（never-allow 除外済み）
+- **After adding to global, removable from project settings**: 昇格後にプロジェクト側から削除できるルール
+
+### 注意
+
+- セッション履歴解析（通常モード）とは排他。`--consolidate` 指定時は既存の `--project`, `--days` 等は無視される
+- read-only: 設定ファイルの書き換えは行わない。出力を元にユーザーが手動で設定を更新する
+- `docs/aidlc/bin/*` のようなプロジェクト相対パスのルールは、全リポジトリで同じパス構造を持つ場合のみ共通化が有効
+
 ## Permissions
 
 このスキルは以下のツールを自動承認して使用します:
 
 - `Bash(python3 *suggest-permissions.py:*)` — 分析スクリプトの実行
 - `Bash(python3 ~/.claude/plugins/cache/ikeisuke-skills/tools/*/skills/suggest-permissions/*)` — プラグインキャッシュ経由での実行
+- `Bash(ghq *)` — ghq コマンド（consolidate モードでリポジトリ列挙に使用）
 
-スクリプトは `~/.claude/projects/` 配下のセッション履歴（JSONL）を**読み取り専用**で解析します。ファイルの書き換えや外部通信は行いません。
+スクリプトは `~/.claude/projects/` 配下のセッション履歴（JSONL）および各リポジトリの `.claude/settings*.json` を**読み取り専用**で解析します。ファイルの書き換えや外部通信は行いません。

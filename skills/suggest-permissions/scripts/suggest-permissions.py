@@ -5,6 +5,7 @@ import argparse
 import json
 import os
 import re
+import subprocess
 import sys
 import time
 from collections import Counter, defaultdict
@@ -36,6 +37,11 @@ def parse_args():
     parser.add_argument("--min-count", type=int, default=3, help="Min occurrences to suggest (default: 3)")
     parser.add_argument("--format", choices=["table", "json"], default="table", help="Output format")
     parser.add_argument("--show-all", action="store_true", help="Include already-allowed patterns")
+    # Consolidate mode
+    parser.add_argument("--consolidate", nargs="+", metavar="GHQ_PREFIX",
+                        help="Consolidate common rules from repos matching ghq prefix(es)")
+    parser.add_argument("--min-repos", type=int, default=2,
+                        help="Min repos to consider a rule common (default: 2)")
     return parser.parse_args()
 
 
@@ -204,6 +210,159 @@ def is_already_allowed(rule, existing_rules):
     return False
 
 
+def list_ghq_repos(prefixes):
+    """List repository full paths matching ghq prefixes."""
+    try:
+        root = subprocess.check_output(["ghq", "root"], text=True).strip()
+    except (FileNotFoundError, subprocess.CalledProcessError):
+        print("Error: ghq not found. Install ghq first: https://github.com/x-motemen/ghq", file=sys.stderr)
+        sys.exit(1)
+
+    repos = set()
+    for prefix in prefixes:
+        try:
+            output = subprocess.check_output(["ghq", "list", prefix], text=True).strip()
+            for line in output.splitlines():
+                if line:
+                    repos.add(os.path.join(root, line))
+        except subprocess.CalledProcessError:
+            pass
+    return sorted(repos)
+
+
+def find_common_rules(repo_rules_map, min_repos, global_rules):
+    """Find rules common across multiple repos, excluding already-global rules."""
+    rule_repos = defaultdict(list)
+    for repo_path, rules in repo_rules_map.items():
+        repo_name = os.path.basename(repo_path)
+        for rule in rules:
+            if not is_already_allowed(rule, global_rules):
+                rule_repos[rule].append(repo_name)
+
+    results = []
+    for rule, repo_list in rule_repos.items():
+        if len(repo_list) >= min_repos:
+            results.append((rule, len(repo_list), sorted(repo_list)))
+    results.sort(key=lambda x: (-x[1], x[0]))
+    return results
+
+
+def run_consolidate(args):
+    """Consolidate common rules from multiple repos."""
+    repos = list_ghq_repos(args.consolidate)
+    if not repos:
+        print("No repos found matching the given prefix(es).", file=sys.stderr)
+        sys.exit(1)
+
+    # Load rules from each repo
+    repo_rules_map = {}
+    for repo_path in repos:
+        settings_dir = os.path.join(repo_path, ".claude")
+        if os.path.isdir(settings_dir):
+            rules = load_allow_rules_from(settings_dir)
+            if rules:
+                repo_rules_map[repo_path] = rules
+
+    if not repo_rules_map:
+        print("No project settings found in any of the matched repos.")
+        return
+
+    # Load global rules
+    global_rules = load_allow_rules_from(Path.home() / ".claude")
+
+    # Find common rules
+    common = find_common_rules(repo_rules_map, args.min_repos, global_rules)
+
+    total_repos = len(repos)
+    repos_with_settings = len(repo_rules_map)
+
+    if args.format == "json":
+        # Build removable map
+        common_rule_set = {r[0] for r in common if not is_never_allow(r[0])}
+        removable = {}
+        for repo_path, rules in repo_rules_map.items():
+            repo_name = os.path.basename(repo_path)
+            to_remove = sorted(r for r in rules if r in common_rule_set)
+            if to_remove:
+                removable[repo_name] = to_remove
+
+        output = {
+            "repos_scanned": total_repos,
+            "repos_with_settings": repos_with_settings,
+            "global_rules": sorted(global_rules),
+            "common_rules": [
+                {
+                    "rule": rule,
+                    "count": count,
+                    "never_allow": is_never_allow(rule),
+                    "repos": repo_list,
+                }
+                for rule, count, repo_list in common
+            ],
+            "removable": removable,
+        }
+        print(json.dumps(output, indent=2, ensure_ascii=False))
+        return
+
+    # Table format
+    prefix_display = ", ".join(args.consolidate)
+    print(f"Consolidation analysis ({repos_with_settings}/{total_repos} repos with settings, prefix: {prefix_display}):\n")
+
+    if global_rules:
+        print(f"Current global rules ({len(global_rules)} rules in ~/.claude/):")
+        for r in sorted(global_rules):
+            print(f"  {r}")
+        print()
+
+    if not common:
+        print(f"No common rules found across {args.min_repos}+ repos (excluding already-global rules).")
+        return
+
+    print(f"Common project rules (found in {args.min_repos}+ repos):\n")
+    fmt = "{:<4} {:<7} {:<50} {}"
+    print(fmt.format("", "REPOS", "RULE", "FOUND IN"))
+    print("-" * 110)
+
+    suggested = []
+    for rule, count, repo_list in common:
+        if is_never_allow(rule):
+            status = "[!!]"
+        else:
+            status = f"[{len(suggested) + 1:>2}]"
+            suggested.append(rule)
+        repos_str = ", ".join(repo_list[:3])
+        if len(repo_list) > 3:
+            repos_str += f", ... (+{len(repo_list) - 3})"
+        print(fmt.format(status, f"{count}/{repos_with_settings}", rule[:50], repos_str))
+
+    never_count = sum(1 for r, _, _ in common if is_never_allow(r))
+    if never_count:
+        print(f"\n[!!] = never auto-allow ({never_count} patterns)")
+
+    if suggested:
+        print(f"\nSuggested global additions ({len(suggested)} rules):")
+        for r in suggested:
+            print(f"  {r}")
+
+    # Show removable rules per repo
+    common_rule_set = set(suggested)
+    removable_repos = []
+    for repo_path, rules in repo_rules_map.items():
+        repo_name = os.path.basename(repo_path)
+        to_remove = sorted(r for r in rules if r in common_rule_set)
+        if to_remove:
+            removable_repos.append((repo_name, to_remove))
+
+    if removable_repos:
+        print("\nAfter adding to global, removable from project settings:")
+        removable_repos.sort(key=lambda x: x[0])
+        for repo_name, rules in removable_repos:
+            rules_str = ", ".join(rules[:5])
+            if len(rules) > 5:
+                rules_str += f", ... (+{len(rules) - 5})"
+            print(f"  {repo_name}: {rules_str}")
+
+
 def collect_tool_uses(filepath, project_name, args):
     """Collect tool_use events from a JSONL file."""
     tool_uses = []
@@ -249,6 +408,10 @@ def collect_tool_uses(filepath, project_name, args):
 
 def main():
     args = parse_args()
+
+    if args.consolidate:
+        run_consolidate(args)
+        return
 
     claude_projects = Path.home() / ".claude" / "projects"
     if not claude_projects.exists():
