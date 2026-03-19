@@ -133,7 +133,10 @@ def extract_bash_pattern(command):
         # Strip optional quotes and $(
         rhs = rhs.lstrip('"\'')
         if rhs.startswith("$("):
-            inner = rhs[2:].rstrip(")").strip()
+            inner = rhs[2:]
+            # Strip trailing ) and optional quote
+            inner = inner.rstrip('"\'')
+            inner = inner.rstrip(")").strip()
             if inner:
                 # Re-parse inner command
                 return extract_bash_pattern(inner)
