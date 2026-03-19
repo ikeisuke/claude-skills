@@ -42,6 +42,8 @@
 このようなコマンドの場合、安全なサブコマンド/フラグだけを個別ルールにするか、ワイルドカードのリスクを明示すること。
 
 危険フラグを持つコマンドの例:
+- **`git -C`**: `git -C /path status` は SAFE だが `git -C /any/repo push --force` のように任意ディレクトリで破壊的操作が可能 → `Bash(git -C *)` は allow しない
+- **`cd`**: 単体は SAFE だが `cd /tmp && rm -rf *` のようにチェインで危険なコマンドを実行可能 → `Bash(cd *)` は allow しない
 - **`git branch`**: `--show-current`, `-v` は SAFE → `git branch -D` は HIGH（ブランチ強制削除）
 - **`git checkout`**: `-b`（新規ブランチ）は LOW → `git checkout .`（変更全破棄）は HIGH
 - **`git stash`**: `list`, `show` は SAFE → `drop`, `clear` は HIGH
@@ -58,7 +60,16 @@
 4. **許可しない**: 毎回確認を求める（デフォルト動作）
 
 `deny` は完全ブロック（実行不可）、`ask` は毎回確認を求める（ユーザーが判断）。
-危険だが状況によっては使いたいコマンドには `ask` が適切。
+
+### ask ルールの使用方針
+
+**`ask` は単独で提案しない。** `allow` の広いルールに対する危険サブパターンのガードとしてのみ使う。
+
+- **正しい使い方**: `allow: git push *` + `ask: git push --force *`（allow のガード）
+- **誤った使い方**: `ask: rm *`（対応する allow がない単独の ask）
+
+対応する `allow` がないコマンドは `ask` に入れず、デフォルトの確認動作に任せる。
+広い `ask` ルールは、細かい `allow` ルールを意図せず上書きしてしまうリスクがある。
 
 ```json
 {
