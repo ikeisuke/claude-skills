@@ -261,8 +261,14 @@ def is_already_allowed(rule, existing_rules):
 
 
 def load_all_rules_from(directory):
-    """Load allow, ask, and deny rules from settings files in a directory."""
-    result = {"allow": set(), "ask": set(), "deny": set()}
+    """Load allow, ask, and deny rules from settings files in a directory.
+
+    Returns: {
+        "allow": set, "ask": set, "deny": set,
+        "rule_origins": {rule: filename, ...}  # which file each rule came from
+    }
+    """
+    result = {"allow": set(), "ask": set(), "deny": set(), "rule_origins": {}}
     for name in ("settings.json", "settings.local.json"):
         path = Path(directory) / name
         if path.exists():
@@ -272,6 +278,7 @@ def load_all_rules_from(directory):
                 for key in ("allow", "ask", "deny"):
                     for rule in perms.get(key, []):
                         result[key].add(rule)
+                        result["rule_origins"][rule] = name
             except (json.JSONDecodeError, OSError):
                 pass
     return result
@@ -340,7 +347,7 @@ def is_guarded(dangerous_pattern, deny_rules, ask_rules):
     return False
 
 
-def make_finding(severity, category, rule, source, rule_list, message, recommendation=""):
+def make_finding(severity, category, rule, source, rule_list, message, recommendation="", file=""):
     """Create a finding dict."""
     return {
         "severity": severity,
@@ -348,6 +355,7 @@ def make_finding(severity, category, rule, source, rule_list, message, recommend
         "rule": rule,
         "source": source,
         "list": rule_list,
+        "file": file,
         "message": message,
         "recommendation": recommendation,
     }
@@ -508,7 +516,7 @@ def run_review(args):
     cwd = os.getcwd()
 
     # Load rules by scope
-    empty_rules = {"allow": set(), "ask": set(), "deny": set()}
+    empty_rules = {"allow": set(), "ask": set(), "deny": set(), "rule_origins": {}}
     if scope in ("global", "all"):
         global_rules = load_all_rules_from(Path.home() / ".claude")
     else:
@@ -532,12 +540,19 @@ def run_review(args):
     # Run checks on allow rules
     findings = []
     for source_name, rules in [("global", global_rules), ("project", project_rules)]:
+        origins = rules.get("rule_origins", {})
         for rule in sorted(rules["allow"]):
-            findings.extend(check_never_allow_violation(rule, source_name))
-            findings.extend(check_destructive_in_allow(rule, source_name))
-            findings.extend(check_sensitive_path(rule, source_name, all_deny))
-            findings.extend(check_overly_broad(rule, source_name))
-            findings.extend(check_wildcard_overmatch(rule, source_name, all_deny, all_ask))
+            origin_file = origins.get(rule, "")
+            new_findings = []
+            new_findings.extend(check_never_allow_violation(rule, source_name))
+            new_findings.extend(check_destructive_in_allow(rule, source_name))
+            new_findings.extend(check_sensitive_path(rule, source_name, all_deny))
+            new_findings.extend(check_overly_broad(rule, source_name))
+            new_findings.extend(check_wildcard_overmatch(rule, source_name, all_deny, all_ask))
+            # Attach file origin to each finding
+            for f in new_findings:
+                f["file"] = origin_file
+            findings.extend(new_findings)
 
     # Check missing protections
     findings.extend(check_missing_protections(all_deny, all_ask))
@@ -585,8 +600,13 @@ def run_review(args):
     print("  " + "-" * 108)
 
     for f in findings:
-        source_label = f"[{f['source']}/{f['list']}]" if f["source"] != "-" else ""
-        rule_col = f"{f['rule'][:35]}  {source_label}" if f["rule"] else "-"
+        # Build source label: e.g. [project/settings.json/allow] or [global/allow]
+        if f["source"] != "-":
+            file_part = f["file"].replace(".json", "") + "/" if f["file"] else ""
+            source_label = f"[{f['source']}/{file_part}{f['list']}]"
+        else:
+            source_label = ""
+        rule_col = f"{f['rule'][:30]}  {source_label}" if f["rule"] else "-"
         print(fmt.format(f["severity"], rule_col[:45], f["message"][:80]))
 
     print()
