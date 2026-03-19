@@ -89,7 +89,7 @@ Group rules by risk level and present:
 
 ### 設定ファイルの振り分け
 
-ルールを **グローバル** (`~/.claude/settings.local.json`) と **プロジェクト** (`.claude/settings.local.json`) に振り分けて出力すること。
+ルールを **グローバル** (`~/.claude/settings.json`) と **プロジェクト** (`.claude/settings.local.json`) に振り分けて出力すること。
 
 | 振り分け基準 | 設定先 | 例 |
 |-------------|--------|-----|
@@ -105,7 +105,7 @@ Group rules by risk level and present:
 
 JSON スニペットを設定先ごとに分けて出力する：
 
-**グローバル** (`~/.claude/settings.local.json`):
+**グローバル** (`~/.claude/settings.json`):
 ```json
 {
   "permissions": {
@@ -193,7 +193,7 @@ ghq list --exact $(git remote get-url origin | sed 's|.*://[^/]*/||;s|\.git$||')
 
 通常モードの Step 3 の「設定ファイルの振り分け」基準に従い、結果を提示する:
 
-1. **グローバルに昇格すべきルール** — `~/.claude/settings.local.json` に追加する JSON スニペット
+1. **グローバルに昇格すべきルール** — `~/.claude/settings.json` に追加する JSON スニペット
 2. **プロジェクトから削除可能なルール** — リポジトリごとに削除できるルールの一覧
 3. **グローバル昇格すべきでないルール** — プロジェクト固有のままにすべき理由を付記
 
