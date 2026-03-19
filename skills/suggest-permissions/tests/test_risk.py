@@ -117,6 +117,49 @@ class TestCheckOverlyBroad(unittest.TestCase):
         self.assertEqual(len(findings), 0)
 
 
+class TestCheckAskOverridesAllow(unittest.TestCase):
+    """Tests for check_ask_overrides_allow()."""
+
+    def _make_rules(self, allow=None, ask=None, deny=None):
+        return {
+            "allow": set(allow or []),
+            "ask": set(ask or []),
+            "deny": set(deny or []),
+            "rule_origins": {},
+        }
+
+    def test_broad_ask_overrides_specific_allow(self):
+        """Project ask Bash(bash *) should flag override of global allow."""
+        project = self._make_rules(ask=["Bash(bash *)"])
+        global_r = self._make_rules(allow=["Bash(bash ~/.claude/plugins/cache/session-title.sh *)"])
+        findings = sp.check_ask_overrides_allow(project, global_r)
+        self.assertEqual(len(findings), 1)
+        self.assertEqual(findings[0]["severity"], "MED")
+        self.assertEqual(findings[0]["category"], "ask-overrides-allow")
+
+    def test_no_conflict(self):
+        """No conflict when ask and allow don't overlap."""
+        project = self._make_rules(ask=["Bash(docker *)"])
+        global_r = self._make_rules(allow=["Bash(git status *)"])
+        findings = sp.check_ask_overrides_allow(project, global_r)
+        self.assertEqual(len(findings), 0)
+
+    def test_deny_also_detected(self):
+        """Project deny rules should also be checked for overrides."""
+        project = self._make_rules(deny=["Bash(git *)"])
+        global_r = self._make_rules(allow=["Bash(git status *)", "Bash(git log *)"])
+        findings = sp.check_ask_overrides_allow(project, global_r)
+        self.assertEqual(len(findings), 1)
+        self.assertIn("2 global allow", findings[0]["message"])
+
+    def test_non_wildcard_ask_ignored(self):
+        """Non-wildcard ask rules should not be flagged."""
+        project = self._make_rules(ask=["Bash(git push --force *)"])
+        global_r = self._make_rules(allow=["Bash(git push *)"])
+        findings = sp.check_ask_overrides_allow(project, global_r)
+        self.assertEqual(len(findings), 0)
+
+
 class TestCheckMissingProtections(unittest.TestCase):
     """Tests for check_missing_protections()."""
 

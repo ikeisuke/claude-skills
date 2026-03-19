@@ -503,6 +503,41 @@ def check_wildcard_overmatch(rule, source, all_deny, all_ask):
     )]
 
 
+def check_ask_overrides_allow(project_rules, global_rules):
+    """Check if broad project ask/deny rules override specific global allow rules."""
+    findings = []
+    project_ask_deny = project_rules["ask"] | project_rules["deny"]
+    for ask_rule in sorted(project_ask_deny):
+        # Only check Bash wildcard rules (e.g. Bash(bash *), Bash(git *))
+        m = re.match(r"^Bash\((.+)\)$", ask_rule)
+        if not m:
+            continue
+        ask_pattern = m.group(1)
+        if not ask_pattern.endswith(" *"):
+            continue
+        ask_prefix = ask_pattern[:-2]  # e.g. "bash", "git"
+        # Find global allow rules that this would override
+        overridden = []
+        for allow_rule in sorted(global_rules["allow"]):
+            am = re.match(r"^Bash\((.+)\)$", allow_rule)
+            if not am:
+                continue
+            allow_pattern = am.group(1)
+            if allow_pattern.startswith(ask_prefix) and allow_rule != ask_rule:
+                overridden.append(allow_rule)
+        if overridden:
+            rule_list = "ask" if ask_rule in project_rules["ask"] else "deny"
+            overridden_str = ", ".join(overridden[:3])
+            if len(overridden) > 3:
+                overridden_str += f" (+{len(overridden) - 3} more)"
+            findings.append(make_finding(
+                "MED", "ask-overrides-allow", ask_rule, "project", rule_list,
+                f"Overrides {len(overridden)} global allow rule(s): {overridden_str}",
+                f"Remove '{ask_rule}' from project {rule_list}, add specific dangerous commands instead.",
+            ))
+    return findings
+
+
 def check_missing_protections(all_deny, all_ask):
     """Check for recommended deny rules that are missing."""
     findings = []
@@ -559,6 +594,10 @@ def run_review(args):
             for f in new_findings:
                 f["file"] = origin_file
             findings.extend(new_findings)
+
+    # Check ask-overrides-allow conflicts (only meaningful when both scopes are loaded)
+    if scope == "all":
+        findings.extend(check_ask_overrides_allow(project_rules, global_rules))
 
     # Check missing protections
     findings.extend(check_missing_protections(all_deny, all_ask))

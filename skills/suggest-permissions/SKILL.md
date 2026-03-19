@@ -239,6 +239,7 @@ python3 /path/to/skills/suggest-permissions/scripts/suggest-permissions.py --rev
 | CRITICAL | never-allow-violation | スクリプトインタプリタ・シェル制御構文が allow にある（任意コード実行） |
 | HIGH | destructive-in-allow | 破壊的コマンド（rm, sudo, kill 等）が allow にある |
 | HIGH | sensitive-path-allowed | 機密パス（.ssh, .aws, .env 等）への Read/Edit/Write が allow にある |
+| MED | ask-overrides-allow | プロジェクトの広い ask/deny ルールがグローバルの個別 allow ルールを上書きしている |
 | MED | wildcard-overmatch | ワイルドカードルールが危険フラグをカバーし、deny/ask ガードがない |
 | MED | overly-broad | スコープなしの Edit/Write（任意ファイル変更可能） |
 | LOW | missing-protection | 推奨 deny ルール（.env, .ssh 等）が未設定 |
