@@ -104,13 +104,8 @@ def parse_args():
 
 
 def get_project_name(project_dir):
-    """Extract project name from directory name."""
-    name = os.path.basename(project_dir)
-    parts = name.split("-")
-    for part in reversed(parts):
-        if part:
-            return part
-    return name
+    """Extract project name from directory name (returns full basename)."""
+    return os.path.basename(project_dir) or project_dir
 
 
 def extract_bash_pattern(command):
@@ -634,7 +629,7 @@ def list_ghq_repos(prefixes):
     try:
         root = subprocess.check_output(["ghq", "root"], text=True).strip()
     except (FileNotFoundError, subprocess.CalledProcessError):
-        print("Error: ghq not found. Install ghq first: https://github.com/x-motemen/ghq", file=sys.stderr)
+        print("Error: ghq が見つかりません。インストール: https://github.com/x-motemen/ghq", file=sys.stderr)
         sys.exit(1)
 
     repos = set()
@@ -786,12 +781,14 @@ def collect_tool_uses(filepath, project_name, args):
     """Collect tool_use events from a JSONL file."""
     tool_uses = []
 
+    parse_errors = 0
     try:
         with open(filepath, "r", encoding="utf-8", errors="replace") as f:
             for line in f:
                 try:
                     record = json.loads(line)
                 except (json.JSONDecodeError, ValueError):
+                    parse_errors += 1
                     continue
 
                 session_id = record.get("sessionId", "")
@@ -819,8 +816,11 @@ def collect_tool_uses(filepath, project_name, args):
                         "cwd": record.get("cwd", ""),
                     })
 
-    except (OSError, IOError):
-        pass
+    except (OSError, IOError) as e:
+        print(f"Warning: Could not read {filepath}: {e}", file=sys.stderr)
+
+    if parse_errors:
+        print(f"Warning: {parse_errors} JSON parse error(s) in {os.path.basename(filepath)}", file=sys.stderr)
 
     return tool_uses
 
