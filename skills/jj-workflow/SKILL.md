@@ -2,7 +2,7 @@
 name: jj-workflow
 description: >
   jj(Jujutsu)でバージョン管理操作を実行する。jjが有効化されているco-locationモード環境で
-  gitコマンドの代わりに使用。
+  gitコマンドの代わりに使用される。
 argument-hint: [subcommand] [args]
 allowed-tools: Bash(jj:*)
 ---

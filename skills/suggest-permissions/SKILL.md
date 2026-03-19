@@ -1,9 +1,9 @@
 ---
 name: suggest-permissions
 description: >
-  Suggest permission auto-approval rules based on session history with risk assessment.
-  Use when the user says "suggest-permissions", "自動承認", "許可ルール",
-  "allow rules", "permission suggestions", or wants to optimize tool approval settings.
+  Suggests permission auto-approval rules based on session history with risk assessment.
+  Triggers on "suggest-permissions", "自動承認", "許可ルール",
+  "allow rules", "permission suggestions", or requests to optimize tool approval settings.
   Also handles "consolidate", "共通化", "グローバルに集約", "共通ルール" for
   extracting common rules across multiple ghq-managed repositories.
   Also handles "review", "レビュー", "監査", "audit", "危険な設定" for

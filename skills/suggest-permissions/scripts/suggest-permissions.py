@@ -73,15 +73,23 @@ RECOMMENDED_DENY = [
 REVIEW_SEVERITY = ["CRITICAL", "HIGH", "MED", "LOW", "INFO"]
 
 
+# 30日: 1開発スプリント程度。直近の作業パターンを反映しつつノイズを抑える
+DEFAULT_DAYS = 30
+# 3回: 1-2回は試行的使用。3回以上で定常的パターンと判断
+DEFAULT_MIN_COUNT = 3
+# 2リポジトリ: 単一リポジトリ固有のルールを除外する最小閾値
+DEFAULT_MIN_REPOS = 2
+
+
 def parse_args():
     parser = argparse.ArgumentParser(
         description="Collect tool usage patterns from session history"
     )
     parser.add_argument("--project", help="Project name filter (substring match)")
     parser.add_argument("--session", help="Session ID filter")
-    parser.add_argument("--days", type=int, default=30, help="Days to look back (default: 30)")
+    parser.add_argument("--days", type=int, default=DEFAULT_DAYS, help="Days to look back (default: %(default)s)")
     parser.add_argument("--tool", help="Tool name filter (case-insensitive)")
-    parser.add_argument("--min-count", type=int, default=3, help="Min occurrences to suggest (default: 3)")
+    parser.add_argument("--min-count", type=int, default=DEFAULT_MIN_COUNT, help="Min occurrences to suggest (default: %(default)s)")
     parser.add_argument("--format", choices=["table", "json"], default="table", help="Output format")
     parser.add_argument("--show-all", action="store_true", help="Include already-allowed patterns")
     # Review mode
@@ -90,8 +98,8 @@ def parse_args():
     # Consolidate mode
     parser.add_argument("--consolidate", nargs="+", metavar="GHQ_PREFIX",
                         help="Consolidate common rules from repos matching ghq prefix(es)")
-    parser.add_argument("--min-repos", type=int, default=2,
-                        help="Min repos to consider a rule common (default: 2)")
+    parser.add_argument("--min-repos", type=int, default=DEFAULT_MIN_REPOS,
+                        help="Min repos to consider a rule common (default: %(default)s)")
     return parser.parse_args()
 
 
@@ -568,8 +576,8 @@ def run_review(args):
     if args.format == "json":
         output = {
             "settings": {
-                "global": {k: sorted(v) for k, v in global_rules.items()},
-                "project": {k: sorted(v) for k, v in project_rules.items()},
+                "global": {k: dict(sorted(v.items())) if isinstance(v, dict) else sorted(v) for k, v in global_rules.items()},
+                "project": {k: dict(sorted(v.items())) if isinstance(v, dict) else sorted(v) for k, v in project_rules.items()},
             },
             "findings": findings,
             "summary": summary,

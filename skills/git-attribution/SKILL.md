@@ -1,10 +1,10 @@
 ---
 name: git-attribution
 description: >
-  Manage Claude Code's git attribution (Co-Authored-By) settings per repository.
-  Use when the user says "署名有効化", "enable attribution", "Claude署名", "git-attribution",
-  or wants to toggle Claude's commit/PR attribution in the current repository's .claude/settings.json.
-  Also use when the user asks about the current attribution status.
+  Manages Claude Code's git attribution (Co-Authored-By) settings per repository.
+  Triggers on "署名有効化", "enable attribution", "Claude署名", "git-attribution",
+  or requests to toggle commit/PR attribution in the current repository's .claude/settings.json.
+  Also triggers when asking about the current attribution status.
 ---
 
 # Git Attribution Manager

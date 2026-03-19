@@ -16,6 +16,7 @@
       "strict": false,
       "skills": [
         "./skills/git-attribution",
+        "./skills/jj-workflow",
         "./skills/session-title",
         "./skills/suggest-permissions"
       ]
