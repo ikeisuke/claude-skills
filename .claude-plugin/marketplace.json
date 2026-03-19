@@ -18,6 +18,7 @@
         "./skills/git-attribution",
         "./skills/jj-workflow",
         "./skills/session-title",
+        "./skills/skill-lint",
         "./skills/suggest-permissions"
       ]
     }

@@ -16,4 +16,5 @@ Custom skills for [Claude Code](https://claude.com/claude-code).
 | [git-attribution](./skills/git-attribution/) | Manage Claude Code's git attribution (Co-Authored-By) per repository |
 | [jj-workflow](./skills/jj-workflow/) | jj (Jujutsu) version control workflow guide for co-location mode |
 | [session-title](./skills/session-title/) | Set terminal tab title and iTerm2 badge for session identification (macOS) |
+| [skill-lint](./skills/skill-lint/) | Check skills against official best practices and report violations |
 | [suggest-permissions](./skills/suggest-permissions/) | Suggest permission auto-approval rules based on session history with risk assessment |
