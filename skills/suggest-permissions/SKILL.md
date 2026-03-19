@@ -4,6 +4,8 @@ description: >
   Suggest permission auto-approval rules based on session history with risk assessment.
   Use when the user says "suggest-permissions", "自動承認", "許可ルール",
   "allow rules", "permission suggestions", or wants to optimize tool approval settings.
+  Also handles "consolidate", "共通化", "グローバルに集約", "共通ルール" for
+  extracting common rules across multiple ghq-managed repositories.
 argument-hint: "[--project <name>] [--days <N>] [--tool <name>] [--min-count <N>] [--consolidate <ghq-prefix>...]"
 allowed-tools: Bash(python3 *suggest-permissions.py:*), Bash(python3 ~/.claude/plugins/cache/ikeisuke-skills/tools/*/skills/suggest-permissions/*), Bash(ghq *)
 ---
@@ -11,6 +13,15 @@ allowed-tools: Bash(python3 *suggest-permissions.py:*), Bash(python3 ~/.claude/p
 # Suggest Permissions
 
 Analyze tool usage from session history and suggest `permissions.allow` rules.
+
+## モード判定
+
+ユーザーの指示に応じて適切なモードを選択する:
+
+| ユーザーの意図 | モード | 判定キーワード |
+|---------------|--------|---------------|
+| セッション履歴から新しいルールを提案してほしい | **通常モード** (Step 1〜3) | `suggest-permissions`, `自動承認`, `許可ルール`, `allow rules` |
+| 複数リポジトリの共通ルールをグローバルに集約したい | **Consolidate モード** (Step C1〜C3) | `consolidate`, `共通化`, `グローバルに集約`, `共通ルール`, ghq prefix の指定 |
 
 ## Step 1: Collect usage data
 
@@ -230,15 +241,28 @@ JSON スニペットを設定先ごとに分けて出力する：
 }
 ```
 
-## Consolidate モード（複数リポジトリの共通ルール抽出）
+## Step C1: 共通ルールデータの収集（Consolidate モード）
 
-`--consolidate` を使うと、ghq 管理下の複数リポジトリから共通の許可ルールを抽出し、グローバル設定への昇格を提案する。
+ghq 管理下の複数リポジトリから共通の許可ルールを抽出する。**絶対パスで実行すること**。
 
 ```bash
-python3 /path/to/scripts/suggest-permissions.py --consolidate <ghq-prefix> [<ghq-prefix>...] [--min-repos <N>] [--format table|json]
+python3 /path/to/skills/suggest-permissions/scripts/suggest-permissions.py --consolidate <ghq-prefix> [OPTIONS]
 ```
 
-### 引数
+スキルの Base directory からスクリプトの絶対パスを組み立てる。
+
+### ghq prefix の決定
+
+ユーザーが prefix を明示していない場合、カレントリポジトリの org/ユーザー名を自動で使用する:
+
+```bash
+# ghq prefix を取得（例: github.com/ikeisuke）
+ghq list --exact $(git remote get-url origin | sed 's|.*://[^/]*/||;s|\.git$||') | head -1 | sed 's|/[^/]*$||'
+```
+
+ユーザーが org 名やユーザー名を指定した場合はそれをそのまま `--consolidate` に渡す。
+
+### Options
 
 | Flag | Description | Default |
 |------|-------------|---------|
@@ -246,29 +270,13 @@ python3 /path/to/scripts/suggest-permissions.py --consolidate <ghq-prefix> [<ghq
 | `--min-repos` | 共通とみなす最低リポジトリ数 | 2 |
 | `--format` | `table` or `json` | table |
 
-### 使用例
+## Step C2: 共通ルールの評価
 
-```bash
-# ユーザー名で絞り込み
-python3 suggest-permissions.py --consolidate ikeisuke
+スクリプト出力を分析し、以下の観点でルールを評価する:
 
-# 3リポジトリ以上で共通のルールのみ
-python3 suggest-permissions.py --consolidate ikeisuke --min-repos 3
-
-# 複数 prefix を指定
-python3 suggest-permissions.py --consolidate ikeisuke myorg
-
-# JSON 出力
-python3 suggest-permissions.py --consolidate ikeisuke --format json
-```
-
-### 動作
-
-1. `ghq root` + `ghq list <prefix>` で対象リポジトリを列挙
-2. 各リポジトリの `.claude/settings.json` / `.claude/settings.local.json` から allow ルールを読み込み
-3. `--min-repos` 以上のリポジトリに存在するルールを抽出（既にグローバルにあるルールは除外）
-4. never-auto-allow チェックを適用（`[!!]` マーク）
-5. グローバルへの昇格候補と、昇格後にプロジェクトから削除可能なルールを表示
+1. **汎用性**: 本当にどのプロジェクトでも使うルールか？（`Bash(git add:*)` → 汎用、`Bash(docs/aidlc/bin/*)` → 特定ワークフロー依存）
+2. **never-auto-allow**: `[!!]` マークのルールはグローバルに昇格しない
+3. **リスク評価**: 通常モードの Step 2 と同じリスク基準を適用
 
 ### 出力の見方
 
@@ -276,9 +284,17 @@ python3 suggest-permissions.py --consolidate ikeisuke --format json
 - **Suggested global additions**: グローバルに追加すべきルール（never-allow 除外済み）
 - **After adding to global, removable from project settings**: 昇格後にプロジェクト側から削除できるルール
 
+## Step C3: 推奨の提示
+
+通常モードの Step 3 の「設定ファイルの振り分け」基準に従い、結果を提示する:
+
+1. **グローバルに昇格すべきルール** — `~/.claude/settings.local.json` に追加する JSON スニペット
+2. **プロジェクトから削除可能なルール** — リポジトリごとに削除できるルールの一覧
+3. **グローバル昇格すべきでないルール** — プロジェクト固有のままにすべき理由を付記
+
 ### 注意
 
-- セッション履歴解析（通常モード）とは排他。`--consolidate` 指定時は既存の `--project`, `--days` 等は無視される
+- セッション履歴解析（通常モード）とは排他。`--consolidate` 指定時は `--project`, `--days` 等は無視される
 - read-only: 設定ファイルの書き換えは行わない。出力を元にユーザーが手動で設定を更新する
 - `docs/aidlc/bin/*` のようなプロジェクト相対パスのルールは、全リポジトリで同じパス構造を持つ場合のみ共通化が有効
 
