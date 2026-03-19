@@ -40,39 +40,22 @@ get_parent_tty() {
   return 1
 }
 
-# --- Set title based on terminal ---
-case "${TERM_PROGRAM:-}" in
-  iTerm.app)
-    # Tab title and badge via escape sequences to parent TTY
-    # (osascript targets the "current" focused tab, not necessarily this session's tab)
-    PARENT_TTY=$(get_parent_tty)
-    if [ -n "$PARENT_TTY" ] && [ -w "$PARENT_TTY" ]; then
-      # Tab title via standard escape sequence
-      printf '\033]0;%s\007' "$TITLE" > "$PARENT_TTY" 2>/dev/null
-      # Badge via iTerm2 proprietary escape sequence (newline-separated)
-      BADGE_TEXT="$LABEL1"
-      [ -n "$LABEL2" ] && BADGE_TEXT="$BADGE_TEXT
+# --- Set title (common to all terminals) ---
+PARENT_TTY=$(get_parent_tty)
+if [ -n "$PARENT_TTY" ] && [ -w "$PARENT_TTY" ]; then
+  # Tab title via standard escape sequence
+  printf '\033]0;%s\007' "$TITLE" > "$PARENT_TTY" 2>/dev/null
+
+  # iTerm2: also set badge (newline-separated labels)
+  if [ "${TERM_PROGRAM:-}" = "iTerm.app" ]; then
+    BADGE_TEXT="$LABEL1"
+    [ -n "$LABEL2" ] && BADGE_TEXT="$BADGE_TEXT
 $LABEL2"
-      [ -n "$LABEL3" ] && BADGE_TEXT="$BADGE_TEXT
+    [ -n "$LABEL3" ] && BADGE_TEXT="$BADGE_TEXT
 $LABEL3"
-      BADGE=$(printf '%s' "$BADGE_TEXT" | base64 | tr -d '\r\n')
-      printf "\033]1337;SetBadgeFormat=%s\007" "$BADGE" > "$PARENT_TTY" 2>/dev/null
-    fi
-    ;;
-  Apple_Terminal)
-    # Tab title via escape sequence to parent TTY (avoids front-window mismatch)
-    PARENT_TTY=$(get_parent_tty)
-    if [ -n "$PARENT_TTY" ] && [ -w "$PARENT_TTY" ]; then
-      printf '\033]0;%s\007' "$TITLE" > "$PARENT_TTY" 2>/dev/null
-    fi
-    ;;
-  *)
-    # Fallback: write escape sequence to parent TTY
-    PARENT_TTY=$(get_parent_tty)
-    if [ -n "$PARENT_TTY" ] && [ -w "$PARENT_TTY" ]; then
-      printf '\033]0;%s\007' "$TITLE" > "$PARENT_TTY" 2>/dev/null
-    fi
-    ;;
-esac
+    BADGE=$(printf '%s' "$BADGE_TEXT" | base64 | tr -d '\r\n')
+    printf "\033]1337;SetBadgeFormat=%s\007" "$BADGE" > "$PARENT_TTY" 2>/dev/null
+  fi
+fi
 
 exit 0
