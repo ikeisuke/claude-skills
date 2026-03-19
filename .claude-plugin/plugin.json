@@ -1,9 +1,0 @@
-{
-  "name": "tools",
-  "description": "Utility skills for Claude Code workflows",
-  "version": "0.0.2",
-  "author": {
-    "name": "ikeisuke",
-    "email": "keisuke@reirou.jp"
-  }
-}
