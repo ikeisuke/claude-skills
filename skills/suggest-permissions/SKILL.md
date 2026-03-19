@@ -6,7 +6,9 @@ description: >
   "allow rules", "permission suggestions", or wants to optimize tool approval settings.
   Also handles "consolidate", "共通化", "グローバルに集約", "共通ルール" for
   extracting common rules across multiple ghq-managed repositories.
-argument-hint: "[--project <name>] [--days <N>] [--tool <name>] [--min-count <N>] [--consolidate <ghq-prefix>...]"
+  Also handles "review", "レビュー", "監査", "audit", "危険な設定" for
+  auditing existing permission settings for dangerous configurations.
+argument-hint: "[--project <name>] [--days <N>] [--tool <name>] [--min-count <N>] [--consolidate <ghq-prefix>...] [--review [global|project|all]]"
 allowed-tools: Bash(python3 *suggest-permissions.py:*), Bash(python3 ~/.claude/plugins/cache/ikeisuke-skills/tools/*/skills/suggest-permissions/*), Bash(ghq *)
 ---
 
@@ -22,6 +24,7 @@ Analyze tool usage from session history and suggest `permissions.allow` rules.
 |---------------|--------|---------------|
 | セッション履歴から新しいルールを提案してほしい | **通常モード** (Step 1〜3) | `suggest-permissions`, `自動承認`, `許可ルール`, `allow rules` |
 | 複数リポジトリの共通ルールをグローバルに集約したい | **Consolidate モード** (Step C1〜C3) | `consolidate`, `共通化`, `グローバルに集約`, `共通ルール`, ghq prefix の指定 |
+| 既存設定の安全性を監査したい | **Review モード** (Step R1〜R2) | `review`, `レビュー`, `監査`, `audit`, `危険な設定` |
 
 ## Step 1: Collect usage data
 
@@ -297,6 +300,61 @@ ghq list --exact $(git remote get-url origin | sed 's|.*://[^/]*/||;s|\.git$||')
 - セッション履歴解析（通常モード）とは排他。`--consolidate` 指定時は `--project`, `--days` 等は無視される
 - read-only: 設定ファイルの書き換えは行わない。出力を元にユーザーが手動で設定を更新する
 - `docs/aidlc/bin/*` のようなプロジェクト相対パスのルールは、全リポジトリで同じパス構造を持つ場合のみ共通化が有効
+
+## Step R1: 既存設定の監査（Review モード）
+
+既存のパーミッション設定（allow/ask/deny）を解析し、危険な構成を検出する。**絶対パスで実行すること**。
+
+```bash
+python3 /path/to/skills/suggest-permissions/scripts/suggest-permissions.py --review [SCOPE] [--format table|json]
+```
+
+スキルの Base directory からスクリプトの絶対パスを組み立てる。
+
+### Options
+
+| Flag | Description | Default |
+|------|-------------|---------|
+| `--review` | 監査スコープ: `global`（グローバルのみ）, `project`（プロジェクトのみ）, `all`（両方） | all |
+| `--format` | `table` or `json` | table |
+
+`--project`, `--days`, `--session` 等の通常モードオプションは Review モードでは無視される。
+
+### 検出カテゴリと重要度
+
+| 重要度 | カテゴリ | 検出内容 |
+|--------|---------|---------|
+| CRITICAL | never-allow-violation | スクリプトインタプリタ・シェル制御構文が allow にある（任意コード実行） |
+| HIGH | destructive-in-allow | 破壊的コマンド（rm, sudo, kill 等）が allow にある |
+| HIGH | sensitive-path-allowed | 機密パス（.ssh, .aws, .env 等）への Read/Edit/Write が allow にある |
+| MED | wildcard-overmatch | ワイルドカードルールが危険フラグをカバーし、deny/ask ガードがない |
+| MED | overly-broad | スコープなしの Edit/Write（任意ファイル変更可能） |
+| LOW | missing-protection | 推奨 deny ルール（.env, .ssh 等）が未設定 |
+| INFO | scoped-interpreter | スコープ付きインタプリタ（特定パス限定）— 信頼確認推奨 |
+| INFO | sensitive-path-guarded | 機密パスが allow にあるが deny でオーバーライドされている |
+
+### deny/ask によるガード判定
+
+allow ルールが危険でも、対応する deny/ask ルールが存在すれば重要度が下がる（deny は allow より優先されるため）。例:
+
+- `Bash(git push *)` が allow にあっても `Bash(git push --force *)` が ask にあれば、`--force` のワイルドカードオーバーマッチは検出されない
+- `Read(~/.ssh/**)` が allow にあっても同じルールが deny にあれば INFO に降格
+
+## Step R2: 結果評価と推奨の提示
+
+スクリプト出力の findings を確認し、重要度別に対処を提案する:
+
+1. **CRITICAL** — 即時対応が必要。allow から削除するか ask に移動。具体的な JSON スニペットを提示
+2. **HIGH** — 対応を強く推奨。deny/ask への移動またはスコープの限定を提案
+3. **MED** — トレードオフを説明し、ユーザーに判断を委ねる。deny/ask ガードの追加を提案
+4. **LOW** — 推奨事項として提示。対応は任意
+5. **INFO** — 情報提供のみ。適切に設定されている項目や確認推奨の項目
+
+### 注意
+
+- Review モードは read-only: 設定ファイルの書き換えは行わない
+- `--review project` はプロジェクトの `.claude/` ディレクトリのみを対象とし、グローバル設定の deny/ask によるガードは考慮しない
+- `--review all` はグローバルとプロジェクトの両方を対象とし、deny/ask のガードも統合して判定する
 
 ## Permissions
 

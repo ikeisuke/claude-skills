@@ -25,6 +25,53 @@ NEVER_ALLOW_COMMANDS = {
     "for", "if", "while", "case", "eval",
 }
 
+# Commands that are destructive / high-risk (should not be in allow without careful scoping)
+HIGH_RISK_COMMANDS = {
+    "rm", "rmdir", "sudo", "kill", "killall",
+    "ssh", "docker", "kubectl", "terraform", "aws",
+    "cp", "mv", "rsync",
+}
+
+# Sensitive path patterns (regex) — file tool rules matching these need attention
+SENSITIVE_PATH_PATTERNS = [
+    r"~/\.ssh",
+    r"~/\.aws",
+    r"~/\.gnupg",
+    r"~/\.config/gh",
+    r"\.env($|\.)",
+    r"credentials",
+    r"secrets?\.",
+    r"\.pem$",
+    r"\.key$",
+    r"id_rsa",
+    r"id_ed25519",
+]
+
+# Commands where wildcard allows dangerous flags/subcommands
+DANGEROUS_FLAG_MAP = {
+    "git branch": ["-D"],
+    "git checkout": ["."],
+    "git stash": ["drop", "clear"],
+    "git reset": ["--hard"],
+    "git push": ["--force", "--force-with-lease"],
+    "rm": ["-rf", "-r"],
+    "gh pr": ["create", "merge", "close"],
+    "gh issue": ["create", "close"],
+    "curl": ["-X POST", "-X PUT", "-X DELETE", "-d"],
+    "git tag": ["-d"],
+}
+
+# Recommended deny rules for common sensitive paths
+RECOMMENDED_DENY = [
+    "Read(.env)",
+    "Read(.env.*)",
+    "Read(~/.ssh/**)",
+    "Read(~/.aws/**)",
+]
+
+# Severity ordering for review findings
+REVIEW_SEVERITY = ["CRITICAL", "HIGH", "MED", "LOW", "INFO"]
+
 
 def parse_args():
     parser = argparse.ArgumentParser(
@@ -37,6 +84,9 @@ def parse_args():
     parser.add_argument("--min-count", type=int, default=3, help="Min occurrences to suggest (default: 3)")
     parser.add_argument("--format", choices=["table", "json"], default="table", help="Output format")
     parser.add_argument("--show-all", action="store_true", help="Include already-allowed patterns")
+    # Review mode
+    parser.add_argument("--review", nargs="?", const="all", choices=["global", "project", "all"],
+                        help="Review existing settings for dangerous configurations (default: all)")
     # Consolidate mode
     parser.add_argument("--consolidate", nargs="+", metavar="GHQ_PREFIX",
                         help="Consolidate common rules from repos matching ghq prefix(es)")
@@ -208,6 +258,347 @@ def is_already_allowed(rule, existing_rules):
             if pattern.startswith(prefix):
                 return True
     return False
+
+
+def load_all_rules_from(directory):
+    """Load allow, ask, and deny rules from settings files in a directory."""
+    result = {"allow": set(), "ask": set(), "deny": set()}
+    for name in ("settings.json", "settings.local.json"):
+        path = Path(directory) / name
+        if path.exists():
+            try:
+                data = json.loads(path.read_text())
+                perms = data.get("permissions", {})
+                for key in ("allow", "ask", "deny"):
+                    for rule in perms.get(key, []):
+                        result[key].add(rule)
+            except (json.JSONDecodeError, OSError):
+                pass
+    return result
+
+
+def parse_bash_rule(rule):
+    """Parse a Bash rule and return (command, full_pattern) or None.
+
+    e.g. "Bash(git push *)" -> ("git push", "git push *")
+         "Bash(rm *)" -> ("rm", "rm *")
+    """
+    match = re.match(r"^Bash\((.+)\)$", rule)
+    if not match:
+        return None
+    pattern = match.group(1)
+    # Extract command (first word or first two words for subcommand tools)
+    parts = pattern.split()
+    if not parts:
+        return None
+    base = parts[0]
+    if base.startswith("\\"):
+        base = base[1:]
+    # Check for subcommand pattern
+    if len(parts) >= 2 and base in (
+        "git", "gh", "npm", "npx", "yarn", "pnpm", "cargo", "go", "docker",
+        "kubectl", "terraform", "pip", "pip3", "brew", "jj", "claude",
+    ):
+        cmd = f"{base} {parts[1]}"
+    else:
+        cmd = base
+    return cmd, pattern
+
+
+def parse_file_rule(rule):
+    """Parse a file tool rule and return (tool, path_pattern) or None.
+
+    e.g. "Read(~/.ssh/**)" -> ("Read", "~/.ssh/**")
+         "Edit" -> ("Edit", None)
+    """
+    match = re.match(r"^(Read|Edit|Write)\((.+)\)$", rule)
+    if match:
+        return match.group(1), match.group(2)
+    if rule in ("Read", "Edit", "Write"):
+        return rule, None
+    return None
+
+
+def is_guarded(dangerous_pattern, deny_rules, ask_rules):
+    """Check if a dangerous pattern is covered by a deny or ask rule."""
+    guard_rule = f"Bash({dangerous_pattern})"
+    all_guards = deny_rules | ask_rules
+    if guard_rule in all_guards:
+        return True
+    # Check wildcard guards: e.g. "Bash(git push --force *)" guards "git push --force"
+    for guard in all_guards:
+        gm = re.match(r"^Bash\((.+)\)$", guard)
+        if not gm:
+            continue
+        gpat = gm.group(1)
+        if gpat.endswith(" *"):
+            prefix = gpat[:-2]
+            if dangerous_pattern.startswith(prefix):
+                return True
+        if dangerous_pattern == gpat:
+            return True
+    return False
+
+
+def make_finding(severity, category, rule, source, rule_list, message, recommendation=""):
+    """Create a finding dict."""
+    return {
+        "severity": severity,
+        "category": category,
+        "rule": rule,
+        "source": source,
+        "list": rule_list,
+        "message": message,
+        "recommendation": recommendation,
+    }
+
+
+def is_scoped_interpreter(rule):
+    """Check if a never-allow rule is scoped to a specific path (not arbitrary execution).
+
+    e.g. "Bash(python3 /specific/path/*)" is scoped — the interpreter can only run
+    specific scripts, not arbitrary code.
+    "Bash(python3 *)" or "Bash(python3 -c *)" is NOT scoped.
+    """
+    parsed = parse_bash_rule(rule)
+    if not parsed:
+        return False
+    cmd, pattern = parsed
+    # pattern is e.g. "python3 /specific/path/*" or "python3 *"
+    parts = pattern.split(None, 1)
+    if len(parts) < 2:
+        return False
+    arg = parts[1]
+    # Scoped if the argument starts with an absolute path or ~ path (not a bare wildcard)
+    return arg.startswith("/") or arg.startswith("~/") or arg.startswith("~/.") or arg.startswith("$HOME/")
+
+
+def check_never_allow_violation(rule, source):
+    """Check if a never-auto-allow command is in allow."""
+    if not is_never_allow(rule):
+        return []
+    parsed = parse_bash_rule(rule)
+    cmd = parsed[0] if parsed else rule
+    # Scoped interpreter rules (specific script paths) are lower severity
+    if is_scoped_interpreter(rule):
+        return [make_finding(
+            "INFO", "scoped-interpreter", rule, source, "allow",
+            f"Interpreter '{cmd}' scoped to specific path — verify the target script is trusted",
+            "",
+        )]
+    return [make_finding(
+        "CRITICAL", "never-allow-violation", rule, source, "allow",
+        f"Script interpreter / shell construct '{cmd}' in allow — permits arbitrary code execution",
+        "Move to 'ask' or remove. Scope to specific scripts if needed.",
+    )]
+
+
+def check_destructive_in_allow(rule, source):
+    """Check if a destructive command is in allow."""
+    parsed = parse_bash_rule(rule)
+    if not parsed:
+        return []
+    cmd, pattern = parsed
+    base = cmd.split()[0]
+    if base in HIGH_RISK_COMMANDS:
+        return [make_finding(
+            "HIGH", "destructive-in-allow", rule, source, "allow",
+            f"Destructive command '{cmd}' in allow — risk of data loss or system modification",
+            f"Move to 'ask', or restrict scope.",
+        )]
+    return []
+
+
+def check_sensitive_path(rule, source, all_deny):
+    """Check if a file tool rule allows access to sensitive paths."""
+    parsed = parse_file_rule(rule)
+    if not parsed:
+        return []
+    tool, path_pattern = parsed
+    if not path_pattern:
+        return []
+    findings = []
+    for sp in SENSITIVE_PATH_PATTERNS:
+        if re.search(sp, path_pattern):
+            # Check if guarded by deny
+            if rule in all_deny:
+                findings.append(make_finding(
+                    "INFO", "sensitive-path-guarded", rule, source, "allow",
+                    f"Sensitive path in allow, but overridden by deny rule",
+                ))
+            else:
+                findings.append(make_finding(
+                    "HIGH", "sensitive-path-allowed", rule, source, "allow",
+                    f"Allows {tool} access to sensitive path matching '{sp}'",
+                    f"Add to 'deny' list or remove from 'allow'.",
+                ))
+            break  # One finding per rule is enough
+    return findings
+
+
+def check_overly_broad(rule, source):
+    """Check for overly broad rules."""
+    findings = []
+    # Bash(*) — allows any command
+    if rule == "Bash(*)":
+        return [make_finding(
+            "CRITICAL", "overly-broad", rule, source, "allow",
+            "Allows execution of ANY Bash command",
+            "Remove and add specific command rules instead.",
+        )]
+    # Bare Edit/Write without scope
+    if rule in ("Edit", "Write"):
+        return [make_finding(
+            "MED", "overly-broad", rule, source, "allow",
+            f"'{rule}' without scope allows modification of ANY file",
+            f"Add path scope, e.g. {rule}(/**).",
+        )]
+    # Bare Read without scope
+    if rule == "Read":
+        return [make_finding(
+            "LOW", "overly-broad", rule, source, "allow",
+            "'Read' without scope — read-only but exposes all files including secrets",
+            "Add path scope, e.g. Read(/**).",
+        )]
+    return findings
+
+
+def check_wildcard_overmatch(rule, source, all_deny, all_ask):
+    """Check if a wildcard rule covers dangerous flags without guards."""
+    parsed = parse_bash_rule(rule)
+    if not parsed:
+        return []
+    cmd, pattern = parsed
+    if not pattern.endswith(" *"):
+        return []
+    dangerous_flags = DANGEROUS_FLAG_MAP.get(cmd)
+    if not dangerous_flags:
+        return []
+    unguarded = []
+    for flag in dangerous_flags:
+        dangerous_pat = f"{cmd} {flag}"
+        if not is_guarded(dangerous_pat, all_deny, all_ask):
+            unguarded.append(flag)
+    if not unguarded:
+        return []
+    flags_str = ", ".join(unguarded)
+    return [make_finding(
+        "MED", "wildcard-overmatch", rule, source, "allow",
+        f"Wildcard matches dangerous flag(s): {flags_str}",
+        f"Add ask/deny guard for: {', '.join(f'Bash({cmd} {f} *)' for f in unguarded)}",
+    )]
+
+
+def check_missing_protections(all_deny, all_ask):
+    """Check for recommended deny rules that are missing."""
+    findings = []
+    for rec_rule in RECOMMENDED_DENY:
+        if rec_rule not in all_deny and rec_rule not in all_ask:
+            findings.append(make_finding(
+                "LOW", "missing-protection", rec_rule, "-", "-",
+                f"Recommended deny rule not configured",
+                f"Add to 'deny' list in global settings.",
+            ))
+    return findings
+
+
+def run_review(args):
+    """Review existing permission settings for dangerous configurations."""
+    scope = args.review  # "global", "project", or "all"
+    cwd = os.getcwd()
+
+    # Load rules by scope
+    empty_rules = {"allow": set(), "ask": set(), "deny": set()}
+    if scope in ("global", "all"):
+        global_rules = load_all_rules_from(Path.home() / ".claude")
+    else:
+        global_rules = empty_rules.copy()
+    if scope in ("project", "all"):
+        project_dir = Path(cwd) / ".claude"
+        if project_dir.exists():
+            project_rules = load_all_rules_from(project_dir)
+        else:
+            project_rules = empty_rules.copy()
+            if scope == "project":
+                print("No .claude/ directory found in current project.", file=sys.stderr)
+                sys.exit(1)
+    else:
+        project_rules = empty_rules.copy()
+
+    # Merged deny/ask for guard checking
+    all_deny = global_rules["deny"] | project_rules["deny"]
+    all_ask = global_rules["ask"] | project_rules["ask"]
+
+    # Run checks on allow rules
+    findings = []
+    for source_name, rules in [("global", global_rules), ("project", project_rules)]:
+        for rule in sorted(rules["allow"]):
+            findings.extend(check_never_allow_violation(rule, source_name))
+            findings.extend(check_destructive_in_allow(rule, source_name))
+            findings.extend(check_sensitive_path(rule, source_name, all_deny))
+            findings.extend(check_overly_broad(rule, source_name))
+            findings.extend(check_wildcard_overmatch(rule, source_name, all_deny, all_ask))
+
+    # Check missing protections
+    findings.extend(check_missing_protections(all_deny, all_ask))
+
+    # Sort by severity
+    findings.sort(key=lambda f: REVIEW_SEVERITY.index(f["severity"]))
+
+    # Summary counts
+    summary = {s: 0 for s in REVIEW_SEVERITY}
+    for f in findings:
+        summary[f["severity"]] += 1
+
+    if args.format == "json":
+        output = {
+            "settings": {
+                "global": {k: sorted(v) for k, v in global_rules.items()},
+                "project": {k: sorted(v) for k, v in project_rules.items()},
+            },
+            "findings": findings,
+            "summary": summary,
+        }
+        print(json.dumps(output, indent=2, ensure_ascii=False))
+        return
+
+    # Table format
+    scope_label = {"global": "global only", "project": "project only", "all": "global + project"}
+    print(f"Permission Review ({scope_label[scope]}):\n")
+
+    print("Settings:")
+    if scope in ("global", "all"):
+        print(f"  Global (~/.claude/): {len(global_rules['deny'])} deny, "
+              f"{len(global_rules['ask'])} ask, {len(global_rules['allow'])} allow")
+    if scope in ("project", "all"):
+        print(f"  Project (.claude/): {len(project_rules['deny'])} deny, "
+              f"{len(project_rules['ask'])} ask, {len(project_rules['allow'])} allow")
+
+    if not findings:
+        print("\nNo issues found. Settings look good.")
+        return
+
+    print(f"\nFindings ({sum(v for k, v in summary.items() if k != 'INFO')} issues):\n")
+
+    fmt = "  {:<10} {:<45} {}"
+    print(fmt.format("SEV", "RULE", "MESSAGE"))
+    print("  " + "-" * 108)
+
+    for f in findings:
+        source_label = f"[{f['source']}/{f['list']}]" if f["source"] != "-" else ""
+        rule_col = f"{f['rule'][:35]}  {source_label}" if f["rule"] else "-"
+        print(fmt.format(f["severity"], rule_col[:45], f["message"][:80]))
+
+    print()
+    summary_parts = [f"{summary[s]} {s.lower()}" for s in REVIEW_SEVERITY if summary[s] > 0]
+    print(f"Summary: {', '.join(summary_parts)}")
+
+    # Show recommendations for HIGH+ findings
+    high_findings = [f for f in findings if f["severity"] in ("CRITICAL", "HIGH") and f["recommendation"]]
+    if high_findings:
+        print("\nRecommendations:")
+        for f in high_findings:
+            print(f"  {f['rule']}: {f['recommendation']}")
 
 
 def list_ghq_repos(prefixes):
@@ -408,6 +799,10 @@ def collect_tool_uses(filepath, project_name, args):
 
 def main():
     args = parse_args()
+
+    if args.review is not None:
+        run_review(args)
+        return
 
     if args.consolidate:
         run_consolidate(args)
