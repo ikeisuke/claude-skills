@@ -6,7 +6,6 @@ Based on "The Complete Guide to Building Skills for Claude" by Anthropic.
 
 import argparse
 import json
-import os
 import re
 import sys
 from pathlib import Path
@@ -90,7 +89,7 @@ def check_frontmatter(fm, fm_raw, skill_dir):
     # Security: XML angle brackets in frontmatter (guide p.11, 31)
     # Exclude YAML block scalar indicators (> at end of key: value line)
     if fm_raw:
-        fm_no_scalars = re.sub(r":\s*>\s*$", ": ", fm_raw, flags=re.MULTILINE)
+        fm_no_scalars = re.sub(r":\s*>[+-]?\s*$", ": ", fm_raw, flags=re.MULTILINE)
         if re.search(r"[<>]", fm_no_scalars):
             findings.append(make_finding("ERROR", "frontmatter-xml",
                 "Frontmatter contains XML angle brackets (< >) — forbidden for security (injection risk)"))
