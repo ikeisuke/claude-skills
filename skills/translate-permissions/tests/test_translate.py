@@ -189,6 +189,17 @@ class TestTranslateToKiro(unittest.TestCase):
         self.assertIn("@codex/codex", config["allowedTools"])
         self.assertIn("@codex/codex_reply", config["allowedTools"])
 
+    def test_mcp_deny(self):
+        """MCP deny rules should not enable the server, and appear in skipped."""
+        permissions = {
+            "allow": [],
+            "deny": ["mcp__dangerous__rm_all"],
+            "ask": [],
+        }
+        config = tp.translate_to_kiro(permissions, "test", "test")
+        self.assertNotIn("@dangerous", config["tools"])
+        self.assertIn("mcp__dangerous__rm_all", config["_skippedClaudeRules"])
+
     def test_mcp_ask(self):
         """MCP ask rules: server in tools but tool not in allowedTools."""
         permissions = {

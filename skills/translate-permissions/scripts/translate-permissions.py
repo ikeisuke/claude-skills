@@ -242,6 +242,9 @@ def translate_to_kiro(permissions, agent_name, description):
 
             # MCP tools
             if tool == "mcp":
+                if category == "deny":
+                    skipped.append(rule)
+                    continue
                 server = parsed["server"]
                 tool_name = parsed["tool_name"]
                 mcp_servers.add(server)
