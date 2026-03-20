@@ -6,7 +6,7 @@
   },
   "metadata": {
     "description": "Custom Claude Code skills by ikeisuke",
-    "version": "0.0.3"
+    "version": "0.0.4"
   },
   "plugins": [
     {
@@ -19,7 +19,8 @@
         "./skills/jj-workflow",
         "./skills/session-title",
         "./skills/skill-lint",
-        "./skills/suggest-permissions"
+        "./skills/suggest-permissions",
+        "./skills/translate-permissions"
       ]
     }
   ]
