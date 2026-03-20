@@ -5,7 +5,7 @@ description: >
   Triggers on "translate-permissions", "Kiro変換", "kiro config", "permission to kiro",
   "Kiroエージェント", "kiro agent".
   将来的に --reverse フラグで Kiro → Claude の逆変換にも対応予定。
-argument-hint: "[--agent-name <name>] [--scope global|project|all]"
+argument-hint: "[--agent-name {name}] [--scope global|project|all]"
 allowed-tools: Bash(python3 *translate-permissions.py:*), Bash(python3 ~/.claude/plugins/cache/ikeisuke-skills/tools/*/skills/translate-permissions/*)
 ---
 
@@ -62,6 +62,24 @@ python3 /path/to/skills/translate-permissions/scripts/translate-permissions.py [
 - **グローバル用**: `~/.kiro/agents/<agent-name>.json`
 
 `_skippedClaudeRules` フィールドは情報提供用。Kiro は未知のフィールドを無視するため、そのまま保存しても問題ない。不要であれば削除を案内する。
+
+## Examples
+
+User: 「Kiro変換して」
+→ カレントリポジトリの Claude Code 設定を読み込み、Kiro エージェント JSON を生成。
+
+User: "translate-permissions --scope global"
+→ グローバル設定のみを対象に翻訳。
+
+## Troubleshooting
+
+### 設定ファイルが見つからない
+
+`~/.claude/settings.json` または `.claude/settings.json` が必要。`--input` で直接パスを指定することも可能。
+
+### MCP ツールがスキップされる
+
+Kiro のエージェント設定では `mcpServers` の定義が別途必要。`_skippedClaudeRules` を参照して手動設定する。
 
 ## Permissions
 

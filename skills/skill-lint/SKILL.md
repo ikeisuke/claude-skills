@@ -88,6 +88,24 @@ python3 /path/to/scripts/skill-lint.py skills/
 | `no-error-handling` | INFO | No try/except in 50+ line script |
 | `no-set-e` | INFO | Shell script without `set -e` |
 
+## Examples
+
+User: 「スキルチェックして」
+→ カレントディレクトリの `skills/` を対象にスクリプトを実行し、結果を報告。
+
+User: "lint skill suggest-permissions"
+→ `skills/suggest-permissions/` を対象にスクリプトを実行し、指摘ごとに修正案を提示。
+
+## Troubleshooting
+
+### スクリプトが見つからない
+
+Base directory からの絶対パスが間違っている。スキルの展開先を確認する。
+
+### 全チェック通過しているのに品質が低い
+
+Lint は構造とメタデータのみをチェックする。指示の具体性や workflow の妥当性は手動レビューが必要。
+
 ## Severity Levels
 
 | Level | Meaning |
