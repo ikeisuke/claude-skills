@@ -214,7 +214,10 @@ def translate_to_kiro(permissions, agent_name, description):
             if tool in READ_TOOLS:
                 if category == "deny":
                     skipped.append(rule)
-                else:
+                elif category == "allow":
+                    tools.add("read")
+                    allowed_tools.append("read")
+                else:  # ask
                     tools.add("read")
                 continue
 
@@ -228,10 +231,14 @@ def translate_to_kiro(permissions, agent_name, description):
                         if path is not None:
                             tools.add("write")
                             write_allowed_paths.append(path)
+                            if category == "allow":
+                                allowed_tools.append("write")
                         else:
                             skipped.append(rule)
                     else:
                         tools.add("write")
+                        if category == "allow":
+                            allowed_tools.append("write")
                 continue
 
             # Bash commands

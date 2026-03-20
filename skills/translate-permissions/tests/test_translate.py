@@ -165,6 +165,29 @@ class TestTranslateToKiro(unittest.TestCase):
         self.assertIn("git add *", config["toolsSettings"]["shell"]["allowedCommands"])
         self.assertIn("rm *", config["toolsSettings"]["shell"]["deniedCommands"])
 
+    def test_allow_file_tools_in_allowed_tools(self):
+        """Allow file tools should appear in allowedTools for auto-approval."""
+        permissions = {
+            "allow": ["Glob", "Read(/**)", "Edit(/**)", "Write(/**)"],
+            "deny": [],
+            "ask": [],
+        }
+        config = tp.translate_to_kiro(permissions, "test", "test")
+        self.assertIn("read", config["allowedTools"])
+        self.assertIn("write", config["allowedTools"])
+
+    def test_ask_file_tools_not_in_allowed_tools(self):
+        """Ask file tools should NOT appear in allowedTools."""
+        permissions = {
+            "allow": [],
+            "deny": [],
+            "ask": ["Read(/**)", "Edit(/**)"],
+        }
+        config = tp.translate_to_kiro(permissions, "test", "test")
+        self.assertIn("read", config["tools"])
+        self.assertIn("write", config["tools"])
+        self.assertNotIn("allowedTools", config)
+
     def test_ask_overrides_broad_allow(self):
         """Ask rules should prevent broad allow wildcards from auto-approving."""
         permissions = {
