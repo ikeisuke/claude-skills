@@ -2,21 +2,36 @@ name: Bump patch version
 
 on:
   pull_request:
-    types: [closed]
+    types: [opened, synchronize]
     branches: [main]
 
 jobs:
   bump:
-    if: github.event.pull_request.merged == true
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: main
+          ref: ${{ github.head_ref }}
+
+      - name: Check if version already bumped
+        id: check
+        run: |
+          file=".claude-plugin/marketplace.json"
+          git fetch origin main
+          base_version=$(git show origin/main:"$file" | jq -r '.metadata.version')
+          head_version=$(jq -r '.metadata.version' "$file")
+          if [ "$base_version" != "$head_version" ]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "Version already bumped: $base_version -> $head_version"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+            echo "Version needs bump: $base_version"
+          fi
 
       - name: Bump patch version in marketplace.json
+        if: steps.check.outputs.skip == 'false'
         run: |
           file=".claude-plugin/marketplace.json"
           current=$(jq -r '.metadata.version' "$file")
@@ -26,6 +41,7 @@ jobs:
           echo "Bumped version: $current -> $new_version"
 
       - name: Commit and push
+        if: steps.check.outputs.skip == 'false'
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
