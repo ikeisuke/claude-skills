@@ -233,7 +233,7 @@ class TestTranslateToKiro(unittest.TestCase):
         self.assertEqual(paths, ["**", "src/**"])
 
     def test_home_path_in_deny_skipped(self):
-        """Home-relative deny rules should be skipped (no Kiro equivalent)."""
+        """Home-relative deny rules should appear in _skippedClaudeRules."""
         permissions = {
             "allow": ["Read(/**)"],
             "deny": ["Read(~/.ssh/**)", "Read(~/.aws/**)"],
@@ -241,8 +241,20 @@ class TestTranslateToKiro(unittest.TestCase):
         }
         config = tp.translate_to_kiro(permissions, "test", "test")
         self.assertIn("read", config["tools"])
-        # Deny file paths are skipped entirely (no toolsSettings for read)
         self.assertNotIn("toolsSettings", config)
+        self.assertIn("Read(~/.ssh/**)", config["_skippedClaudeRules"])
+        self.assertIn("Read(~/.aws/**)", config["_skippedClaudeRules"])
+
+    def test_deny_file_rules_in_skipped(self):
+        """Deny rules for file tools should appear in _skippedClaudeRules."""
+        permissions = {
+            "allow": ["Edit(/**)"],
+            "deny": ["Read(.env)", "Edit(.env)"],
+            "ask": [],
+        }
+        config = tp.translate_to_kiro(permissions, "test", "test")
+        self.assertIn("Read(.env)", config["_skippedClaudeRules"])
+        self.assertIn("Edit(.env)", config["_skippedClaudeRules"])
 
     def test_empty_permissions(self):
         permissions = {"allow": [], "deny": [], "ask": []}

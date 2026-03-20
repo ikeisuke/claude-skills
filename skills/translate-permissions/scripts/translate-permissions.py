@@ -47,6 +47,9 @@ def load_claude_settings(scope, input_path=None):
     Returns dict with keys: allow, deny, ask (each a list of rule strings).
     """
     if input_path:
+        if not Path(input_path).exists():
+            print(f"Error: file not found: {input_path}", file=sys.stderr)
+            sys.exit(1)
         with open(input_path) as f:
             data = json.load(f)
         perms = data.get("permissions", data)
@@ -208,17 +211,22 @@ def translate_to_kiro(permissions, agent_name, description):
 
             # Read-family tools
             if tool in READ_TOOLS:
-                tools.add("read")
-                # Read path patterns are informational only (Kiro has no read.allowedPaths)
+                if category == "deny":
+                    skipped.append(rule)
+                else:
+                    tools.add("read")
                 continue
 
             # Write-family tools
             if tool in WRITE_TOOLS:
-                tools.add("write")
-                if parsed.get("pattern"):
-                    path = normalize_file_path(parsed["pattern"])
-                    if path is not None and category in ("allow", "ask"):
-                        write_allowed_paths.append(path)
+                if category == "deny":
+                    skipped.append(rule)
+                else:
+                    tools.add("write")
+                    if parsed.get("pattern"):
+                        path = normalize_file_path(parsed["pattern"])
+                        if path is not None:
+                            write_allowed_paths.append(path)
                 continue
 
             # Bash commands
