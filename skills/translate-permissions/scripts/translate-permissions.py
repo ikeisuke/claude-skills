@@ -235,12 +235,16 @@ def translate_to_kiro(permissions, agent_name, description):
 
             # Bash commands
             if tool == "Bash":
-                tools.add("shell")
                 cmd = normalize_bash_pattern(parsed["pattern"])
                 if category == "allow":
+                    tools.add("shell")
                     allowed_commands.append(cmd)
                 elif category == "deny":
                     denied_commands.append(cmd)
+                elif category == "ask":
+                    tools.add("shell")
+                # Note: deny commands are collected here; they are only
+                # included in output if shell is also in tools (via allow/ask)
                 # ask: tool is in tools but command is not auto-allowed
                 continue
 
@@ -306,13 +310,15 @@ def build_kiro_config(
         paths = list(dict.fromkeys(write_allowed_paths))
         tools_settings["write"] = {"allowedPaths": paths}
 
-    shell_settings = {}
-    if allowed_commands:
-        shell_settings["allowedCommands"] = list(dict.fromkeys(allowed_commands))
-    if denied_commands:
-        shell_settings["deniedCommands"] = list(dict.fromkeys(denied_commands))
-    if shell_settings:
-        tools_settings["shell"] = shell_settings
+    # Only emit shell settings if shell is in tools (i.e. has allow/ask rules)
+    if "shell" in tools:
+        shell_settings = {}
+        if allowed_commands:
+            shell_settings["allowedCommands"] = list(dict.fromkeys(allowed_commands))
+        if denied_commands:
+            shell_settings["deniedCommands"] = list(dict.fromkeys(denied_commands))
+        if shell_settings:
+            tools_settings["shell"] = shell_settings
 
     if tools_settings:
         config["toolsSettings"] = tools_settings

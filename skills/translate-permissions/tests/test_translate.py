@@ -165,6 +165,18 @@ class TestTranslateToKiro(unittest.TestCase):
         self.assertIn("git add *", config["toolsSettings"]["shell"]["allowedCommands"])
         self.assertIn("rm *", config["toolsSettings"]["shell"]["deniedCommands"])
 
+    def test_deny_only_bash_no_shell(self):
+        """deny-only Bash rules should NOT enable shell tool or emit shell settings."""
+        permissions = {
+            "allow": [],
+            "deny": ["Bash(rm -rf *)"],
+            "ask": [],
+        }
+        config = tp.translate_to_kiro(permissions, "test", "test")
+        self.assertNotIn("shell", config["tools"])
+        # No shell settings should be emitted without shell in tools
+        self.assertNotIn("toolsSettings", config)
+
     def test_ask_bash(self):
         """ask rules should add shell to tools but not to allowedCommands."""
         permissions = {
