@@ -114,7 +114,7 @@ def check_frontmatter(fm, skill_dir):
                 f"description contains second-person pattern(s): {', '.join(set(second_person))}. Prefer third person"))
         # Check for what + when
         has_what = len(desc) > 20  # minimal description
-        has_when = bool(re.search(r"(trigger|when|言|時|場合|request)", desc, re.IGNORECASE))
+        has_when = bool(re.search(r"(trigger|when|言|時|とき|場合|request)", desc, re.IGNORECASE))
         if has_what and not has_when:
             findings.append(make_finding("INFO", "description-when",
                 "description explains what the skill does but not when to use it"))
@@ -166,8 +166,8 @@ def check_body(body, skill_dir):
                     if nested:
                         findings.append(make_finding("WARN", "nested-reference",
                             f"{ref_file.name} links to other references (keep 1 level deep): {', '.join(nested[:3])}"))
-                except OSError:
-                    pass
+                except OSError as e:
+                    print(f"warning: {e}", file=sys.stderr)
 
     return findings
 
@@ -184,7 +184,8 @@ def check_scripts(skill_dir):
             continue
         try:
             text = script_file.read_text(encoding="utf-8")
-        except OSError:
+        except OSError as e:
+            print(f"warning: {e}", file=sys.stderr)
             continue
 
         rel_name = f"scripts/{script_file.name}"
@@ -248,8 +249,8 @@ def check_structure(body, skill_dir):
                         if not has_toc:
                             findings.append(make_finding("INFO", "no-toc",
                                 f"references/{ref_file.name} is {ref_lines} lines — consider adding a table of contents"))
-                except OSError:
-                    pass
+                except OSError as e:
+                    print(f"warning: {e}", file=sys.stderr)
 
     # Check for Windows-style paths
     if "\\" in body and re.search(r"[A-Z]:\\", body):

@@ -226,8 +226,8 @@ def load_allow_rules_from(directory):
                 data = json.loads(path.read_text())
                 for rule in data.get("permissions", {}).get("allow", []):
                     rules.add(rule)
-            except (json.JSONDecodeError, OSError):
-                pass
+            except (json.JSONDecodeError, OSError) as e:
+                print(f"warning: {path}: {e}", file=sys.stderr)
     return rules
 
 
@@ -285,8 +285,8 @@ def load_all_rules_from(directory):
                     for rule in perms.get(key, []):
                         result[key].add(rule)
                         result["rule_origins"][rule] = name
-            except (json.JSONDecodeError, OSError):
-                pass
+            except (json.JSONDecodeError, OSError) as e:
+                print(f"warning: {path}: {e}", file=sys.stderr)
     return result
 
 
@@ -682,7 +682,7 @@ def list_ghq_repos(prefixes):
                 if line:
                     repos.add(os.path.join(root, line))
         except subprocess.CalledProcessError:
-            pass
+            pass  # prefix にマッチするリポジトリがないのは正常
     return sorted(repos)
 
 
@@ -900,7 +900,8 @@ def main():
             try:
                 if jsonl_file.stat().st_mtime < cutoff:
                     continue
-            except OSError:
+            except OSError as e:
+                print(f"warning: {jsonl_file}: {e}", file=sys.stderr)
                 continue
 
             uses = collect_tool_uses(str(jsonl_file), project_name, args)
