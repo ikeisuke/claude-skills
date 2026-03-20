@@ -19,7 +19,8 @@
         "./skills/jj-workflow",
         "./skills/session-title",
         "./skills/skill-lint",
-        "./skills/suggest-permissions"
+        "./skills/suggest-permissions",
+        "./skills/translate-permissions"
       ]
     }
   ]
