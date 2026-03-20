@@ -2,8 +2,8 @@
 """Translate Claude Code permission settings to Kiro CLI custom agent configuration."""
 
 import argparse
+import fnmatch
 import json
-import os
 import re
 import sys
 from pathlib import Path
@@ -183,6 +183,7 @@ def translate_to_kiro(permissions, agent_name, description):
     tools = set()
     allowed_tools = []
     allowed_commands = []
+    ask_commands = []
     denied_commands = []
     write_allowed_paths = []
     mcp_servers = set()  # Track server names for tools array
@@ -243,9 +244,7 @@ def translate_to_kiro(permissions, agent_name, description):
                     denied_commands.append(cmd)
                 elif category == "ask":
                     tools.add("shell")
-                # Note: deny commands are collected here; they are only
-                # included in output if shell is also in tools (via allow/ask)
-                # ask: tool is in tools but command is not auto-allowed
+                    ask_commands.append(cmd)
                 continue
 
             # MCP tools
@@ -264,6 +263,22 @@ def translate_to_kiro(permissions, agent_name, description):
 
             # Unknown tools — skip
             skipped.append(rule)
+
+    # Filter out allow commands whose wildcards would override ask commands.
+    # In Claude, ask rules narrow broader allow rules (e.g. allow "git push *"
+    # + ask "git push --force *" means --force requires confirmation).
+    # Kiro's allowedCommands has no such override, so we must remove the
+    # broad allow pattern to prevent it from bypassing the ask intent.
+    if ask_commands and allowed_commands:
+        filtered_allowed = []
+        for allow_cmd in allowed_commands:
+            covers_ask = any(
+                fnmatch.fnmatch(ask_cmd, allow_cmd)
+                for ask_cmd in ask_commands
+            )
+            if not covers_ask:
+                filtered_allowed.append(allow_cmd)
+        allowed_commands = filtered_allowed
 
     return build_kiro_config(
         tools=tools,

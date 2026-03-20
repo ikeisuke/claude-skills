@@ -165,6 +165,35 @@ class TestTranslateToKiro(unittest.TestCase):
         self.assertIn("git add *", config["toolsSettings"]["shell"]["allowedCommands"])
         self.assertIn("rm *", config["toolsSettings"]["shell"]["deniedCommands"])
 
+    def test_ask_overrides_broad_allow(self):
+        """Ask rules should prevent broad allow wildcards from auto-approving."""
+        permissions = {
+            "allow": ["Bash(git push *)"],
+            "deny": [],
+            "ask": ["Bash(git push --force *)"],
+        }
+        config = tp.translate_to_kiro(permissions, "test", "test")
+        self.assertIn("shell", config["tools"])
+        # The broad "git push *" should be removed from allowedCommands
+        # because it would override the ask intent for --force
+        shell = config.get("toolsSettings", {}).get("shell", {})
+        self.assertNotIn("git push *", shell.get("allowedCommands", []))
+
+    def test_ask_does_not_remove_unrelated_allow(self):
+        """Ask rules should not affect unrelated allow commands."""
+        permissions = {
+            "allow": ["Bash(git push *)", "Bash(git status *)", "Bash(ls:*)"],
+            "deny": [],
+            "ask": ["Bash(git push --force *)"],
+        }
+        config = tp.translate_to_kiro(permissions, "test", "test")
+        shell = config["toolsSettings"]["shell"]
+        # git push * should be removed (covers ask pattern)
+        self.assertNotIn("git push *", shell["allowedCommands"])
+        # unrelated commands should remain
+        self.assertIn("git status *", shell["allowedCommands"])
+        self.assertIn("ls *", shell["allowedCommands"])
+
     def test_deny_only_bash_no_shell(self):
         """deny-only Bash rules should NOT enable shell tool or emit shell settings."""
         permissions = {
