@@ -95,6 +95,14 @@ jj status            # コンフリクトのあるファイルを確認
 jj status            # 解消を確認（自動検知される）
 ```
 
+## Examples
+
+User: 「変更をコミットして push して」
+→ `jj describe` → `jj new` → `jj bookmark set` → `jj git push` を順に実行。
+
+User: 「新しいブランチで作業を始めたい」
+→ `jj new main` → `jj bookmark create feature-xxx` で新 bookmark を作成。
+
 ## 参考
 
 - [jj公式ドキュメント](https://docs.jj-vcs.dev/)

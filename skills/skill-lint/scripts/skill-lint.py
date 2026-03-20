@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
-"""Check Claude Code skills against official best practices."""
+"""Check Claude Code skills against official best practices.
+
+Based on "The Complete Guide to Building Skills for Claude" by Anthropic.
+"""
 
 import argparse
 import json
-import os
 import re
 import sys
 from pathlib import Path
@@ -17,18 +19,18 @@ def parse_args():
 
 
 def parse_frontmatter(skill_md_path):
-    """Parse YAML frontmatter from SKILL.md. Returns (frontmatter_dict, body_text, error)."""
+    """Parse YAML frontmatter from SKILL.md. Returns (frontmatter_dict, body_text, raw_frontmatter, error)."""
     try:
         text = Path(skill_md_path).read_text(encoding="utf-8")
     except OSError as e:
-        return None, None, str(e)
+        return None, None, None, str(e)
 
     if not text.startswith("---"):
-        return None, text, "Missing YAML frontmatter"
+        return None, text, None, "Missing YAML frontmatter"
 
     end = text.find("---", 3)
     if end == -1:
-        return None, text, "Unclosed YAML frontmatter"
+        return None, text, None, "Unclosed YAML frontmatter"
 
     fm_text = text[3:end].strip()
     body = text[end + 3:].strip()
@@ -55,7 +57,7 @@ def parse_frontmatter(skill_md_path):
     if current_key:
         fm[current_key] = " ".join(current_val_lines).strip()
 
-    return fm, body, None
+    return fm, body, fm_text, None
 
 
 def find_skills(target):
@@ -77,12 +79,20 @@ def make_finding(severity, check, message):
 
 # --- Check functions ---
 
-def check_frontmatter(fm, skill_dir):
+def check_frontmatter(fm, fm_raw, skill_dir):
     """Check YAML frontmatter fields."""
     findings = []
     if fm is None:
         findings.append(make_finding("ERROR", "frontmatter", "Missing or invalid YAML frontmatter"))
         return findings
+
+    # Security: XML angle brackets in frontmatter (guide p.11, 31)
+    # Exclude YAML block scalar indicators (> at end of key: value line)
+    if fm_raw:
+        fm_no_scalars = re.sub(r":\s*>[+-]?\s*$", ": ", fm_raw, flags=re.MULTILINE)
+        if re.search(r"[<>]", fm_no_scalars):
+            findings.append(make_finding("ERROR", "frontmatter-xml",
+                "Frontmatter contains XML angle brackets (< >) — forbidden for security (injection risk)"))
 
     # name
     name = fm.get("name", "")
@@ -107,17 +117,45 @@ def check_frontmatter(fm, skill_dir):
     else:
         if len(desc) > 1024:
             findings.append(make_finding("ERROR", "description-length", f"description is {len(desc)} chars (max 1024)"))
-        # Check for second-person patterns (should be third person)
-        second_person = re.findall(r"\b(Use when|You can|You should|Use this|Use it)\b", desc, re.IGNORECASE)
-        if second_person:
-            findings.append(make_finding("WARN", "description-voice",
-                f"description contains second-person pattern(s): {', '.join(set(second_person))}. Prefer third person"))
-        # Check for what + when
+
+        # XML angle brackets in description
+        if re.search(r"[<>]", desc):
+            findings.append(make_finding("ERROR", "description-xml",
+                "description contains XML angle brackets (< >) — forbidden for security"))
+
+        # Vague description patterns (guide p.12)
+        vague_patterns = [
+            r"^Helps with \w+\.$",
+            r"^Does things\.?$",
+            r"^A? ?skill for \w+\.?$",
+            r"^Handles \w+\.?$",
+        ]
+        for pat in vague_patterns:
+            if re.match(pat, desc, re.IGNORECASE):
+                findings.append(make_finding("WARN", "description-vague",
+                    "description is too vague — be specific about what it does and when to use it"))
+                break
+
+        # Short description likely too generic
+        if len(desc) < 30:
+            findings.append(make_finding("WARN", "description-short",
+                f"description is only {len(desc)} chars — include what it does, when to use, and trigger phrases"))
+
+        # Check for what + when (guide p.10-11)
+        # Guide recommends: [What it does] + [When to use it] + [Key capabilities]
         has_what = len(desc) > 20  # minimal description
-        has_when = bool(re.search(r"(trigger|when|言|時|とき|場合|request)", desc, re.IGNORECASE))
+        trigger_patterns = r"(Use when|Trigger|trigger|When .* (says|asks|mentions|uploads|requests)|言|時|とき|場合|Triggers on)"
+        has_when = bool(re.search(trigger_patterns, desc, re.IGNORECASE))
         if has_what and not has_when:
-            findings.append(make_finding("INFO", "description-when",
-                "description explains what the skill does but not when to use it"))
+            findings.append(make_finding("WARN", "description-no-triggers",
+                "description explains what the skill does but lacks trigger conditions — "
+                "add 'Use when user says/asks/mentions...' or 'Triggers on ...'"))
+
+    # compatibility (guide p.11)
+    compat = fm.get("compatibility", "")
+    if compat and len(compat) > 500:
+        findings.append(make_finding("WARN", "compatibility-length",
+            f"compatibility is {len(compat)} chars (max 500)"))
 
     return findings
 
@@ -132,14 +170,18 @@ def check_body(body, skill_dir):
     line_count = len(lines)
 
     # Line count checks
-    # 500行超過: ERROR
     if line_count > 500:
         findings.append(make_finding("ERROR", "body-length",
             f"SKILL.md body is {line_count} lines (max 500). Split into references/"))
-    # 300行超過: INFO（分割推奨）
     elif line_count > 300:
         findings.append(make_finding("INFO", "body-length",
             f"SKILL.md body is {line_count} lines. Consider splitting detailed content into references/"))
+
+    # Word count check (guide p.27: keep under 5,000 words)
+    word_count = len(body.split())
+    if word_count > 5000:
+        findings.append(make_finding("WARN", "body-word-count",
+            f"SKILL.md body is {word_count} words (recommended max 5,000). Move detailed docs to references/"))
 
     # Check reference links point to existing files
     ref_pattern = re.findall(r"\[.*?\]\(((?:references|scripts|assets)/[^\)]+)\)", body)
@@ -168,6 +210,20 @@ def check_body(body, skill_dir):
                             f"{ref_file.name} links to other references (keep 1 level deep): {', '.join(nested[:3])}"))
                 except OSError as e:
                     print(f"warning: {e}", file=sys.stderr)
+
+    # Check for examples section (guide p.12: recommended structure)
+    has_examples = bool(re.search(r"^#{1,3}\s*(Examples?|使用例|サンプル)", body, re.MULTILINE | re.IGNORECASE))
+    if not has_examples and line_count > 30:
+        findings.append(make_finding("INFO", "no-examples",
+            "No examples section found — add usage examples to help Claude follow the workflow"))
+
+    # Check for error handling / troubleshooting section (guide p.12-13)
+    has_troubleshooting = bool(re.search(
+        r"^#{1,3}\s*(Troubleshoot|Error|Common Issues|トラブル|エラー|注意事項)",
+        body, re.MULTILINE | re.IGNORECASE))
+    if not has_troubleshooting and line_count > 50:
+        findings.append(make_finding("INFO", "no-troubleshooting",
+            "No troubleshooting/error handling section found — document common issues and solutions"))
 
     return findings
 
@@ -228,6 +284,12 @@ def check_structure(body, skill_dir):
     if body is None:
         return findings
 
+    # Check for README.md inside skill folder (guide p.10: no README.md)
+    readme = skill_dir / "README.md"
+    if readme.exists():
+        findings.append(make_finding("WARN", "readme-in-skill",
+            "README.md found inside skill folder — all docs should go in SKILL.md or references/"))
+
     # Check for multi-step workflows without checklists
     step_headers = re.findall(r"^##\s+Step\s+", body, re.MULTILINE)
     if len(step_headers) >= 2:
@@ -275,13 +337,13 @@ def lint_skill(skill_dir):
     if not skill_md.exists():
         return [make_finding("ERROR", "no-skill-md", "SKILL.md not found")]
 
-    fm, body, fm_error = parse_frontmatter(skill_md)
+    fm, body, fm_raw, fm_error = parse_frontmatter(skill_md)
 
     findings = []
     if fm_error and fm is None:
         findings.append(make_finding("ERROR", "frontmatter-parse", fm_error))
     else:
-        findings.extend(check_frontmatter(fm, skill_dir))
+        findings.extend(check_frontmatter(fm, fm_raw, skill_dir))
 
     findings.extend(check_body(body, skill_dir))
     findings.extend(check_scripts(skill_dir))

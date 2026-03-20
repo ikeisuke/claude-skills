@@ -5,7 +5,7 @@ description: >
   Triggers on "セッションタイトル", "set session title", "session-title",
   or requests to label the current terminal session. Requires macOS (uses osascript).
   On non-macOS, silently skipped.
-argument-hint: <label1> <label2> <label3>
+argument-hint: "{label1} {label2} {label3}"
 ---
 
 # Session Title (macOS)

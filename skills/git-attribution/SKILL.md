@@ -44,6 +44,20 @@ Set to empty strings in repo's `.claude/settings.json`:
 }
 ```
 
+## Examples
+
+User: 「署名有効化」
+→ `.claude/settings.json` に `attribution` セクションを追加し、有効化を報告。
+
+User: "Check attribution status"
+→ `.claude/settings.json` を読み、現在の attribution 状態を表示。
+
+## Troubleshooting
+
+### 有効化したのに Co-Authored-By が付かない
+
+グローバル設定 (`~/.claude/settings.json`) で `""` に設定されている場合、プロジェクト設定が `"default"` でも上書きされることがある。グローバル側を確認する。
+
 ## Rules
 
 - Never modify `~/.claude/settings.json` (global).
