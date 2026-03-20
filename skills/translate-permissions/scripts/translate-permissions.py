@@ -222,11 +222,15 @@ def translate_to_kiro(permissions, agent_name, description):
                 if category == "deny":
                     skipped.append(rule)
                 else:
-                    tools.add("write")
                     if parsed.get("pattern"):
                         path = normalize_file_path(parsed["pattern"])
                         if path is not None:
+                            tools.add("write")
                             write_allowed_paths.append(path)
+                        else:
+                            skipped.append(rule)
+                    else:
+                        tools.add("write")
                 continue
 
             # Bash commands

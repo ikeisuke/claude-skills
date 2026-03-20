@@ -256,6 +256,27 @@ class TestTranslateToKiro(unittest.TestCase):
         self.assertIn("Read(~/.ssh/**)", config["_skippedClaudeRules"])
         self.assertIn("Read(~/.aws/**)", config["_skippedClaudeRules"])
 
+    def test_unmappable_write_path_skipped(self):
+        """Write rules with unmappable home paths should be skipped, not enable write."""
+        permissions = {
+            "allow": ["Write(~/.ssh/config)"],
+            "deny": [],
+            "ask": [],
+        }
+        config = tp.translate_to_kiro(permissions, "test", "test")
+        self.assertNotIn("write", config["tools"])
+        self.assertIn("Write(~/.ssh/config)", config["_skippedClaudeRules"])
+
+    def test_write_without_pattern_enables_write(self):
+        """Write without a path pattern should enable write tool."""
+        permissions = {
+            "allow": ["Write"],
+            "deny": [],
+            "ask": [],
+        }
+        config = tp.translate_to_kiro(permissions, "test", "test")
+        self.assertIn("write", config["tools"])
+
     def test_deny_file_rules_in_skipped(self):
         """Deny rules for file tools should appear in _skippedClaudeRules."""
         permissions = {
