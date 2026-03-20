@@ -39,7 +39,11 @@ SKILL_RE = re.compile(r"^Skill\((.+)\)$")
 def load_claude_settings(scope, input_path=None):
     """Load and merge Claude Code permission settings.
 
-    Merge order (later overrides earlier):
+    All files are merged by concatenating their allow/deny/ask arrays
+    (matching Claude Code's actual behavior where all levels are active
+    simultaneously and deny always takes precedence over allow).
+
+    Files loaded:
     1. ~/.claude/settings.json (global)
     2. .claude/settings.json (project)
     3. .claude/settings.local.json (project local)
