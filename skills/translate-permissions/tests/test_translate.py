@@ -166,15 +166,45 @@ class TestTranslateToKiro(unittest.TestCase):
         self.assertIn("rm *", config["toolsSettings"]["shell"]["deniedCommands"])
 
     def test_allow_file_tools_in_allowed_tools(self):
-        """Allow file tools should appear in allowedTools for auto-approval."""
+        """Allow write tools should appear in allowedTools for auto-approval."""
         permissions = {
-            "allow": ["Glob", "Read(/**)", "Edit(/**)", "Write(/**)"],
+            "allow": ["Edit(/**)", "Write(/**)"],
+            "deny": [],
+            "ask": [],
+        }
+        config = tp.translate_to_kiro(permissions, "test", "test")
+        self.assertIn("write", config["allowedTools"])
+
+    def test_path_scoped_read_not_in_allowed_tools(self):
+        """Path-scoped Read should NOT be in allowedTools (Kiro has no read.allowedPaths)."""
+        permissions = {
+            "allow": ["Read(/**)", "Read(/src/**)"],
+            "deny": [],
+            "ask": [],
+        }
+        config = tp.translate_to_kiro(permissions, "test", "test")
+        self.assertIn("read", config["tools"])
+        self.assertNotIn("allowedTools", config)
+
+    def test_bare_read_in_allowed_tools(self):
+        """Bare Read (no path) should appear in allowedTools."""
+        permissions = {
+            "allow": ["Read"],
             "deny": [],
             "ask": [],
         }
         config = tp.translate_to_kiro(permissions, "test", "test")
         self.assertIn("read", config["allowedTools"])
-        self.assertIn("write", config["allowedTools"])
+
+    def test_bare_glob_grep_in_allowed_tools(self):
+        """Bare Glob/Grep should appear in allowedTools."""
+        permissions = {
+            "allow": ["Glob", "Grep"],
+            "deny": [],
+            "ask": [],
+        }
+        config = tp.translate_to_kiro(permissions, "test", "test")
+        self.assertIn("read", config["allowedTools"])
 
     def test_ask_file_tools_not_in_allowed_tools(self):
         """Ask file tools should NOT appear in allowedTools."""

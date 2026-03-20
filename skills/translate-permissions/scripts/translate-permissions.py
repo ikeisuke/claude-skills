@@ -211,12 +211,16 @@ def translate_to_kiro(permissions, agent_name, description):
                 continue
 
             # Read-family tools
+            # Note: Kiro has no read.allowedPaths, so path-scoped Read rules
+            # cannot be auto-approved without widening access. Only bare
+            # Read (no path) is added to allowedTools.
             if tool in READ_TOOLS:
                 if category == "deny":
                     skipped.append(rule)
                 elif category == "allow":
                     tools.add("read")
-                    allowed_tools.append("read")
+                    if not parsed.get("pattern"):
+                        allowed_tools.append("read")
                 else:  # ask
                     tools.add("read")
                 continue
