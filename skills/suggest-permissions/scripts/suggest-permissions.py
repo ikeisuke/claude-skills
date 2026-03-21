@@ -108,8 +108,28 @@ def get_project_name(project_dir):
     return os.path.basename(project_dir) or project_dir
 
 
+def split_chained_commands(command):
+    """Split a command line by &&, ||, ; into individual commands.
+
+    Returns a list of stripped command strings.
+    Handles pipes (|) as part of a single command, not a separator.
+    """
+    if not command:
+        return []
+    first_line = command.strip().split("\n")[0]
+    # Split by &&, ||, ; — but not inside quotes
+    # Use a simple approach: split by these delimiters
+    # (full shell parsing is overkill for permission analysis)
+    parts = re.split(r'\s*(?:&&|\|\||;)\s*', first_line)
+    return [p.strip() for p in parts if p.strip()]
+
+
 def extract_bash_pattern(command):
-    """Extract a meaningful pattern from a Bash command for rule suggestion."""
+    """Extract a meaningful pattern from a Bash command for rule suggestion.
+
+    Only extracts from the first command in a chain (&&, ||, ;).
+    Use extract_all_bash_patterns() to get patterns from all commands in a chain.
+    """
     if not command:
         return None
     cmd = command.strip()
@@ -117,7 +137,13 @@ def extract_bash_pattern(command):
         return None
 
     first_line = cmd.split("\n")[0]
-    parts = first_line.split()
+    # Take only the first command in a chain
+    chain = split_chained_commands(first_line)
+    if not chain:
+        return None
+    first_cmd = chain[0]
+
+    parts = first_cmd.split()
     if not parts:
         return None
 
@@ -129,7 +155,7 @@ def extract_bash_pattern(command):
     # Permission rules can't contain $() due to parentheses parsing,
     # so extract the inner command instead.
     if "=" in base:
-        rhs = first_line.split("=", 1)[1].strip()
+        rhs = first_cmd.split("=", 1)[1].strip()
         # Strip optional quotes and $(
         rhs = rhs.lstrip('"\'')
         if rhs.startswith("$("):
@@ -152,6 +178,28 @@ def extract_bash_pattern(command):
     return base
 
 
+def extract_all_bash_patterns(command):
+    """Extract patterns from all commands in a chained command line.
+
+    Returns a list of (pattern, single_command) tuples.
+    e.g., "git status && git push origin main" -> [("git status", "git status"), ("git push", "git push origin main")]
+    """
+    if not command:
+        return []
+    cmd = command.strip()
+    if cmd.startswith("#"):
+        return []
+
+    first_line = cmd.split("\n")[0]
+    chain = split_chained_commands(first_line)
+    results = []
+    for single_cmd in chain:
+        pattern = extract_bash_pattern(single_cmd)
+        if pattern:
+            results.append((pattern, single_cmd))
+    return results
+
+
 def analyze_bash_args(pattern, full_command):
     """Analyze flags and arguments in a command relative to its extracted pattern.
 
@@ -163,17 +211,27 @@ def analyze_bash_args(pattern, full_command):
     if not pattern or not full_command:
         return {"flags": [], "positionals": [], "dangerous_flags_found": []}
 
+    # Use only the single command portion (not the whole chain)
+    # full_command may be a single command already or the relevant segment
     first_line = full_command.strip().split("\n")[0]
+    # Isolate the command segment that matches the pattern
+    chain = split_chained_commands(first_line)
+    target = first_line  # fallback
+    for seg in chain:
+        normalized_seg = re.sub(r"^\\", "", seg.strip())
+        if normalized_seg.startswith(pattern):
+            target = seg.strip()
+            break
+
     # Strip the pattern prefix from the command to get the arguments
     # Handle backslash-prefixed commands (e.g., \rm -> rm)
-    normalized = re.sub(r"^\\", "", first_line.strip())
+    normalized = re.sub(r"^\\", "", target)
     # Remove the pattern prefix
     if normalized.startswith(pattern):
         remainder = normalized[len(pattern):].strip()
     else:
         # Pattern might not match literally (e.g., \git vs git)
-        remainder = first_line.strip()
-        parts = remainder.split()
+        parts = target.split()
         # Skip tokens until we've consumed the pattern
         pattern_parts = pattern.split()
         skip = len(pattern_parts)
@@ -994,25 +1052,31 @@ def main():
             rule = tool
             rule_counts[rule] += 1
         elif tool == "Bash":
-            pattern = extract_bash_pattern(inp.get("command", ""))
-            if pattern:
+            cmd = inp.get("command", "")
+            # Extract patterns from all commands in a chain (&&, ||, ;)
+            all_patterns = extract_all_bash_patterns(cmd)
+            if not all_patterns:
+                # Fallback to single extraction
+                pattern = extract_bash_pattern(cmd)
+                if pattern:
+                    all_patterns = [(pattern, cmd)]
+            for pattern, single_cmd in all_patterns:
                 rule = generate_bash_rule(pattern)
                 rule_counts[rule] += 1
-                cmd = inp.get("command", "")
                 if len(rule_examples[rule]) < 20:
-                    rule_examples[rule].append(cmd[:200])
+                    rule_examples[rule].append(single_cmd[:200])
                 # Analyze arguments/flags
                 stats = rule_arg_stats[rule]
                 stats["pattern"] = pattern
-                args_info = analyze_bash_args(pattern, cmd)
+                args_info = analyze_bash_args(pattern, single_cmd)
                 for flag in args_info["flags"]:
                     stats["flag_counts"][flag] += 1
                 for pos in args_info["positionals"]:
                     stats["positional_counts"][pos] += 1
                 for dflag in args_info["dangerous_flags_found"]:
                     stats["dangerous_flags_seen"][dflag] += 1
-                if cmd and len(stats["unique_commands"]) < 30:
-                    stats["unique_commands"].add(cmd.split("\n")[0][:200])
+                if single_cmd and len(stats["unique_commands"]) < 30:
+                    stats["unique_commands"].add(single_cmd[:200])
         elif tool in FILE_TOOLS:
             fp = inp.get("file_path", "")
             cwd = use.get("cwd", "")
