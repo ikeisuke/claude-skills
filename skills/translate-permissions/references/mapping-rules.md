@@ -2,51 +2,74 @@
 
 ## ツール対応表
 
-| Claude ルール | Kiro `tools` | `allowedTools` | `toolsSettings` | 備考 |
-|---|---|---|---|---|
-| `Glob` | `read` | — | — | 暗黙的に read に含まれる |
-| `Grep` | `read` | — | — | 暗黙的に read に含まれる |
-| `Read(path)` | `read` | — | — | Kiro は read に allowedPaths なし |
-| `Edit(path)` | `write` | — | `write.allowedPaths` | |
-| `Write(path)` | `write` | — | `write.allowedPaths` | |
-| `Bash(cmd)` | `shell` | — | `shell.allowedCommands` / `deniedCommands` | |
-| `mcp__srv__tool` | `@srv` | `@srv/tool` | — | MCP サーバー定義は手動追加が必要 |
-| `WebSearch` | — | — | — | スキップ |
-| `WebFetch` | — | — | — | スキップ |
-| `Agent` | — | — | — | スキップ |
-| `Skill(name)` | — | — | — | スキップ（Kiro は resources で管理） |
+| Claude ルール | Kiro tool | `toolsSettings` キー | 備考 |
+|---|---|---|---|
+| `Glob` | `glob` | `glob.allowedPaths` / `deniedPaths` | |
+| `Grep` | `grep` | `grep.allowedPaths` / `deniedPaths` | |
+| `Read(path)` | `read` | `read.allowedPaths` / `deniedPaths` | |
+| `Edit(path)` | `write` | `write.allowedPaths` / `deniedPaths` | |
+| `Write(path)` | `write` | `write.allowedPaths` / `deniedPaths` | |
+| `Bash(cmd)` | `shell` | `shell.allowedCommands` / `deniedCommands` | パターンは正規表現（後述） |
+| `WebSearch` | `web_search` | — | 設定なし |
+| `WebFetch` | `web_fetch` | `web_fetch.trusted` / `blocked` | 正規表現パターン |
+| `WebFetch(domain:x)` | `web_fetch` | `web_fetch.trusted` | ドメインを正規表現に変換 |
+| `Agent` | `use_subagent` | `subagent.trustedAgents` | |
+| `mcp__srv__tool` | `@srv` | — | `allowedTools` に `@srv/tool` |
+| `Skill(name)` | — | — | スキップ（Kiro は resources で管理） |
 
 ## allow / deny / ask の対応
 
 | Claude カテゴリ | Kiro の扱い |
 |---|---|
-| `allow` | `tools` + `allowedTools`（自動承認） |
-| `deny` | Bash → `shell.deniedCommands`、ファイル系 → スキップ |
-| `ask` | `tools` に含めるが `allowedTools` には含めない |
+| `allow` | `tools` + `allowedTools` + `toolsSettings.*` で自動承認 |
+| `deny` | Bash → `shell.deniedCommands`、ファイル系 → `*.deniedPaths`、WebFetch → `web_fetch.blocked` |
+| `ask` | `tools` に含めるが `allowedTools`/`allowedCommands` には含めない |
 
 ## パターン変換ルール
 
-### Bash パターン
+### Bash パターン → shell コマンド正規表現
 
-- `git add:*` → `git add *` — コロン区切りをスペースに変換
-- `git status *` → `git status *` — そのまま
-- `\\rm file` → `\\rm file` — エスケープはそのまま保持
+Kiro の `allowedCommands`/`deniedCommands` は **正規表現**（自動的に `\A` `\z` でアンカーされる。lookaround 不可）。
+Claude のパターンは glob 形式なので変換が必要。
+
+| Claude | Kiro | 変換ルール |
+|--------|------|-----------|
+| `git status *` | `git status .*` | `*` → `.*` |
+| `git add:*` | `git add .*` | `:*` → ` .*` |
+| `\\rm file` | `\\\\rm file` | バックスラッシュは正規表現でもエスケープが必要 |
+| `ls -la` (exact) | `ls -la` | 完全一致（アンカー付き） |
 
 ### ファイルパス
 
-- `/**` → `**` — 先頭の `/` を除去（プロジェクト相対）
-- `/src/**` → `src/**` — 同上
-- `///tmp/**` → `/tmp/**` — 三重スラッシュ → 絶対パス
-- `~/.ssh/**` → スキップ — ホームディレクトリ相対は変換不可
+| Claude | Kiro | 変換ルール |
+|--------|------|-----------|
+| `/**` | `**` | 先頭の `/` を除去（プロジェクト相対） |
+| `/src/**` | `src/**` | 同上 |
+| `///tmp/**` | `/tmp/**` | 三重スラッシュ → 絶対パス |
+| `~/.ssh/**` | — | スキップ（ホームディレクトリ相対は変換不可）。エージェントプロンプトで制限を記述する運用を推奨 |
 
 ### MCP ツール名
 
 - `mcp__serverName__toolName` → `@serverName/toolName`
 - MCP サーバーの `mcpServers` 定義（command, args, env）は自動生成不可。手動で追加が必要。
 
+### WebFetch ドメイン → web_fetch.trusted
+
+- `WebFetch(domain:example.com)` → `trusted: [".*example\\.com.*"]`
+- ドメインのドットは正規表現でエスケープする
+
+## Kiro 固有の設定
+
+Claude Code にない Kiro 固有の設定は、必要に応じて手動追加を案内する:
+
+| 設定 | 説明 | 推奨 |
+|------|------|------|
+| `shell.autoAllowReadonly` | 読み取り専用コマンドを自動許可 | Claude の SAFE 分類コマンドが多い場合に `true` を提案 |
+| `shell.denyByDefault` | allowedCommands 外を全拒否 | Claude で厳格な allow リストを使っている場合に `true` を提案 |
+| `glob.allowReadOnly` / `grep.allowReadOnly` | 任意パスの検索を許可 | Claude で Glob/Grep がスコープなし allow の場合に `true` を提案 |
+
 ## エッジケース
 
-- **deny のファイルルール**: Kiro に `deniedPaths` は存在しない。`Read(.env)` の deny は変換不可。
-- **home パスの deny**: `Read(~/.ssh/**)` は Kiro に対応なし。エージェントプロンプトで制限を記述する運用を推奨。
 - **重複パス**: 複数の Write/Edit ルールのパスは `allowedPaths` 配列に統合・重複除去。
 - **MCP サーバー設定**: ツール参照（`@server/tool`）のみ生成。サーバー起動設定は別途必要。
+- **deny のホームパス**: `Read(~/.ssh/**)` は `read.deniedPaths` に直接変換できない（Kiro は glob パス、Claude はホーム相対）。エージェントプロンプトで制限を記述する運用を推奨。

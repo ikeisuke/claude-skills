@@ -2,20 +2,23 @@
 """Translate Claude Code permission settings to Kiro CLI custom agent configuration."""
 
 import argparse
-import fnmatch
 import json
 import re
 import sys
 from pathlib import Path
 
-# Claude tools that map to Kiro's built-in "read" tool
-READ_TOOLS = {"Glob", "Grep", "Read"}
+# Claude tools that map to Kiro's "read" tool
+READ_TOOLS = {"Read"}
 
-# Claude tools that map to Kiro's built-in "write" tool
+# Claude tools that map to their own Kiro tools (glob, grep)
+GLOB_TOOLS = {"Glob"}
+GREP_TOOLS = {"Grep"}
+
+# Claude tools that map to Kiro's "write" tool
 WRITE_TOOLS = {"Edit", "Write"}
 
 # Claude tools with no Kiro built-in equivalent (skipped)
-SKIPPED_TOOLS = {"WebSearch", "WebFetch", "Agent", "AskUserQuestion",
+SKIPPED_TOOLS = {"AskUserQuestion",
                  "TaskCreate", "TaskUpdate", "TaskList", "TaskGet", "TaskOutput", "TaskStop",
                  "NotebookEdit", "EnterPlanMode", "ExitPlanMode",
                  "EnterWorktree", "ExitWorktree"}
@@ -127,17 +130,31 @@ def parse_permission_rule(rule):
     return {"tool": rule, "pattern": None, "raw": rule}
 
 
-def normalize_bash_pattern(pattern):
-    """Convert Claude Bash pattern to Kiro shell command pattern.
+def glob_to_regex(pattern):
+    """Convert a Claude Bash glob pattern to a Kiro shell regex pattern.
 
-    - 'git add:*' -> 'git add *'
-    - 'git status *' -> 'git status *' (unchanged)
+    - 'git add:*' -> 'git add .*'
+    - 'git status *' -> 'git status .*'
+    - 'ls -la' -> 'ls -la' (exact match, no wildcard)
+    - Escapes regex metacharacters except * which becomes .*
     """
-    return pattern.replace(":*", " *")
+    # First, replace colon-wildcard with space-wildcard
+    pattern = pattern.replace(":*", " *")
+
+    # Split on * to handle wildcards, escape the non-wildcard parts
+    parts = pattern.split("*")
+    escaped_parts = []
+    for i, part in enumerate(parts):
+        # Escape regex metacharacters in each part (but not *)
+        escaped = re.escape(part)
+        # re.escape escapes spaces as '\ ', undo that
+        escaped = escaped.replace("\\ ", " ")
+        escaped_parts.append(escaped)
+    return ".*".join(escaped_parts)
 
 
 def normalize_file_path(pattern):
-    """Convert Claude file path pattern to Kiro allowedPaths pattern.
+    """Convert Claude file path pattern to Kiro allowedPaths/deniedPaths pattern.
 
     - '/**' -> '**' (project-relative)
     - '/src/**' -> 'src/**' (strip leading slash)
@@ -160,6 +177,15 @@ def normalize_file_path(pattern):
 
     # Already relative
     return pattern
+
+
+def domain_to_regex(domain):
+    """Convert a domain string to a regex pattern for Kiro web_fetch.trusted.
+
+    - 'example.com' -> '.*example\\.com.*'
+    """
+    escaped = re.escape(domain)
+    return f".*{escaped}.*"
 
 
 def parse_mcp_tool(rule):
@@ -189,7 +215,16 @@ def translate_to_kiro(permissions, agent_name, description):
     allowed_commands = []
     ask_commands = []
     denied_commands = []
-    write_allowed_paths = []
+    # File tool paths: {kiro_tool: {"allowed": [...], "denied": [...]}}
+    file_paths = {
+        "read": {"allowed": [], "denied": []},
+        "write": {"allowed": [], "denied": []},
+        "glob": {"allowed": [], "denied": []},
+        "grep": {"allowed": [], "denied": []},
+    }
+    # web_fetch patterns
+    web_fetch_trusted = []
+    web_fetch_blocked = []
     mcp_servers = set()  # Track server names for tools array
     mcp_allowed = []  # @server/tool entries for allowedTools
     skipped = []
@@ -209,49 +244,163 @@ def translate_to_kiro(permissions, agent_name, description):
                 skipped.append(rule)
                 continue
 
-            # WebFetch with domain — skip
-            if tool == "WebFetch":
-                skipped.append(rule)
+            # WebSearch
+            if tool == "WebSearch":
+                if category == "allow":
+                    tools.add("web_search")
+                    allowed_tools.append("web_search")
+                elif category == "ask":
+                    tools.add("web_search")
+                # deny: skip
                 continue
 
-            # Read-family tools
-            # Note: Kiro has no read.allowedPaths, so path-scoped Read rules
-            # cannot be auto-approved without widening access. Only bare
-            # Read (no path) is added to allowedTools.
-            if tool in READ_TOOLS:
+            # WebFetch / WebFetch(domain:...)
+            if tool == "WebFetch":
+                domain = parsed.get("pattern")
+                if domain:
+                    regex = domain_to_regex(domain)
+                    if category == "allow":
+                        tools.add("web_fetch")
+                        web_fetch_trusted.append(regex)
+                    elif category == "deny":
+                        web_fetch_blocked.append(regex)
+                    elif category == "ask":
+                        tools.add("web_fetch")
+                else:
+                    # Bare WebFetch
+                    if category == "allow":
+                        tools.add("web_fetch")
+                        allowed_tools.append("web_fetch")
+                    elif category == "ask":
+                        tools.add("web_fetch")
+                continue
+
+            # Agent
+            if tool == "Agent":
+                if category == "allow":
+                    tools.add("use_subagent")
+                    allowed_tools.append("use_subagent")
+                elif category == "ask":
+                    tools.add("use_subagent")
+                continue
+
+            # Glob tool
+            if tool in GLOB_TOOLS:
+                kiro_tool = "glob"
                 if category == "deny":
-                    skipped.append(rule)
+                    if parsed.get("pattern"):
+                        path = normalize_file_path(parsed["pattern"])
+                        if path is not None:
+                            file_paths[kiro_tool]["denied"].append(path)
+                        else:
+                            skipped.append(rule)
+                    else:
+                        skipped.append(rule)
                 elif category == "allow":
-                    tools.add("read")
-                    if not parsed.get("pattern"):
-                        allowed_tools.append("read")
+                    tools.add(kiro_tool)
+                    if parsed.get("pattern"):
+                        path = normalize_file_path(parsed["pattern"])
+                        if path is not None:
+                            file_paths[kiro_tool]["allowed"].append(path)
+                        else:
+                            skipped.append(rule)
+                    else:
+                        allowed_tools.append(kiro_tool)
                 else:  # ask
-                    tools.add("read")
+                    tools.add(kiro_tool)
+                continue
+
+            # Grep tool
+            if tool in GREP_TOOLS:
+                kiro_tool = "grep"
+                if category == "deny":
+                    if parsed.get("pattern"):
+                        path = normalize_file_path(parsed["pattern"])
+                        if path is not None:
+                            file_paths[kiro_tool]["denied"].append(path)
+                        else:
+                            skipped.append(rule)
+                    else:
+                        skipped.append(rule)
+                elif category == "allow":
+                    tools.add(kiro_tool)
+                    if parsed.get("pattern"):
+                        path = normalize_file_path(parsed["pattern"])
+                        if path is not None:
+                            file_paths[kiro_tool]["allowed"].append(path)
+                        else:
+                            skipped.append(rule)
+                    else:
+                        allowed_tools.append(kiro_tool)
+                else:  # ask
+                    tools.add(kiro_tool)
+                continue
+
+            # Read tool
+            if tool in READ_TOOLS:
+                kiro_tool = "read"
+                if category == "deny":
+                    if parsed.get("pattern"):
+                        path = normalize_file_path(parsed["pattern"])
+                        if path is not None:
+                            file_paths[kiro_tool]["denied"].append(path)
+                        else:
+                            skipped.append(rule)
+                    else:
+                        skipped.append(rule)
+                elif category == "allow":
+                    tools.add(kiro_tool)
+                    if parsed.get("pattern"):
+                        path = normalize_file_path(parsed["pattern"])
+                        if path is not None:
+                            file_paths[kiro_tool]["allowed"].append(path)
+                        else:
+                            skipped.append(rule)
+                    else:
+                        allowed_tools.append(kiro_tool)
+                else:  # ask
+                    tools.add(kiro_tool)
                 continue
 
             # Write-family tools
             if tool in WRITE_TOOLS:
+                kiro_tool = "write"
                 if category == "deny":
-                    skipped.append(rule)
-                else:
                     if parsed.get("pattern"):
                         path = normalize_file_path(parsed["pattern"])
                         if path is not None:
-                            tools.add("write")
-                            write_allowed_paths.append(path)
-                            if category == "allow":
-                                allowed_tools.append("write")
+                            file_paths[kiro_tool]["denied"].append(path)
                         else:
                             skipped.append(rule)
                     else:
-                        tools.add("write")
-                        if category == "allow":
-                            allowed_tools.append("write")
+                        skipped.append(rule)
+                elif category == "allow":
+                    if parsed.get("pattern"):
+                        path = normalize_file_path(parsed["pattern"])
+                        if path is not None:
+                            tools.add(kiro_tool)
+                            file_paths[kiro_tool]["allowed"].append(path)
+                            allowed_tools.append(kiro_tool)
+                        else:
+                            skipped.append(rule)
+                    else:
+                        tools.add(kiro_tool)
+                        allowed_tools.append(kiro_tool)
+                else:  # ask
+                    if parsed.get("pattern"):
+                        path = normalize_file_path(parsed["pattern"])
+                        if path is not None:
+                            tools.add(kiro_tool)
+                            file_paths[kiro_tool]["allowed"].append(path)
+                        else:
+                            skipped.append(rule)
+                    else:
+                        tools.add(kiro_tool)
                 continue
 
             # Bash commands
             if tool == "Bash":
-                cmd = normalize_bash_pattern(parsed["pattern"])
+                cmd = glob_to_regex(parsed["pattern"])
                 if category == "allow":
                     tools.add("shell")
                     allowed_commands.append(cmd)
@@ -279,7 +428,7 @@ def translate_to_kiro(permissions, agent_name, description):
             # Unknown tools — skip
             skipped.append(rule)
 
-    # Filter out allow commands whose wildcards would override ask commands.
+    # Filter out allow commands whose regex would match ask commands.
     # In Claude, ask rules narrow broader allow rules (e.g. allow "git push *"
     # + ask "git push --force *" means --force requires confirmation).
     # Kiro's allowedCommands has no such override, so we must remove the
@@ -287,10 +436,14 @@ def translate_to_kiro(permissions, agent_name, description):
     if ask_commands and allowed_commands:
         filtered_allowed = []
         for allow_cmd in allowed_commands:
-            covers_ask = any(
-                fnmatch.fnmatch(ask_cmd, allow_cmd)
-                for ask_cmd in ask_commands
-            )
+            try:
+                allow_re = re.compile(f"\\A{allow_cmd}\\Z")
+                covers_ask = any(
+                    allow_re.match(ask_cmd)
+                    for ask_cmd in ask_commands
+                )
+            except re.error:
+                covers_ask = False
             if not covers_ask:
                 filtered_allowed.append(allow_cmd)
         allowed_commands = filtered_allowed
@@ -300,7 +453,9 @@ def translate_to_kiro(permissions, agent_name, description):
         allowed_tools=allowed_tools,
         allowed_commands=allowed_commands,
         denied_commands=denied_commands,
-        write_allowed_paths=write_allowed_paths,
+        file_paths=file_paths,
+        web_fetch_trusted=web_fetch_trusted,
+        web_fetch_blocked=web_fetch_blocked,
         mcp_servers=mcp_servers,
         mcp_allowed=mcp_allowed,
         skipped=skipped,
@@ -311,7 +466,8 @@ def translate_to_kiro(permissions, agent_name, description):
 
 def build_kiro_config(
     tools, allowed_tools, allowed_commands, denied_commands,
-    write_allowed_paths, mcp_servers, mcp_allowed, skipped,
+    file_paths, web_fetch_trusted, web_fetch_blocked,
+    mcp_servers, mcp_allowed, skipped,
     agent_name, description,
 ):
     """Assemble the final Kiro agent JSON structure."""
@@ -335,12 +491,20 @@ def build_kiro_config(
     # Build toolsSettings
     tools_settings = {}
 
-    if write_allowed_paths:
-        # Deduplicate while preserving order
-        paths = list(dict.fromkeys(write_allowed_paths))
-        tools_settings["write"] = {"allowedPaths": paths}
+    # File tool settings (read, write, glob, grep)
+    for kiro_tool in ("read", "write", "glob", "grep"):
+        paths = file_paths.get(kiro_tool, {"allowed": [], "denied": []})
+        settings = {}
+        allowed = list(dict.fromkeys(paths["allowed"]))
+        denied = list(dict.fromkeys(paths["denied"]))
+        if allowed:
+            settings["allowedPaths"] = allowed
+        if denied:
+            settings["deniedPaths"] = denied
+        if settings:
+            tools_settings[kiro_tool] = settings
 
-    # Only emit shell settings if shell is in tools (i.e. has allow/ask rules)
+    # Shell settings — only emit if shell is in tools (i.e. has allow/ask rules)
     if "shell" in tools:
         shell_settings = {}
         if allowed_commands:
@@ -349,6 +513,20 @@ def build_kiro_config(
             shell_settings["deniedCommands"] = list(dict.fromkeys(denied_commands))
         if shell_settings:
             tools_settings["shell"] = shell_settings
+    elif denied_commands:
+        # deny-only: still emit deniedCommands even without shell in tools
+        tools_settings["shell"] = {
+            "deniedCommands": list(dict.fromkeys(denied_commands))
+        }
+
+    # web_fetch settings
+    web_fetch_settings = {}
+    if web_fetch_trusted:
+        web_fetch_settings["trusted"] = list(dict.fromkeys(web_fetch_trusted))
+    if web_fetch_blocked:
+        web_fetch_settings["blocked"] = list(dict.fromkeys(web_fetch_blocked))
+    if web_fetch_settings:
+        tools_settings["web_fetch"] = web_fetch_settings
 
     if tools_settings:
         config["toolsSettings"] = tools_settings
