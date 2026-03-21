@@ -73,12 +73,60 @@ Options:
 
 ## Step 2: Evaluate risk and propose rules
 
-After collecting the data, evaluate each suggested rule using the risk criteria below.
-Present the results as a table with columns: COUNT, RISK, RULE, RATIONALE.
+スクリプト出力を深く分析し、具体的な根拠に基づいてルールを評価する。
+最終的に COUNT, RISK, RULE, RATIONALE のテーブルを提示する。
 
-**評価基準**: [references/risk-criteria.md](references/risk-criteria.md) を参照（リスクレベル、well-known 分類、never-auto-allow ルール）
+**参照ドキュメント**:
+- [references/risk-criteria.md](references/risk-criteria.md)（リスクレベル、well-known 分類、never-auto-allow ルール）
+- [references/file-tool-rules.md](references/file-tool-rules.md)（スコープ別ルール、変数代入、ワイルドカードオーバーマッチ、コンテキスト判定）
 
-**ファイルツール・ワイルドカード**: [references/file-tool-rules.md](references/file-tool-rules.md) を参照（スコープ別ルール、変数代入、ワイルドカードオーバーマッチ、コンテキスト判定）
+### Step 2a: 危険フラグ警告の確認
+
+スクリプト出力に `!! Dangerous flags detected` セクションがある場合、最優先で対処する:
+
+- 各 UNGUARDED な危険フラグに対して ask/deny ガードルールを提案する
+- ルール全体が SAFE でも（例: `git push`）、特定フラグ（`--force`）でリスクが変わることを明記する
+
+### Step 2b: 引数分布の分析
+
+各 Bash ルールについて、スクリプト出力の `flags` / `args` / `examples` を必ず確認する:
+
+1. **フラグ内訳を確認**: どのフラグが何回使われたか。`[!]` マーク付きは危険フラグ
+2. **位置引数を確認**: 同じ引数ばかりなら、ワイルドカードよりスコープを絞れる可能性がある
+3. **ユニーク例を確認**: 実際のコマンドを読んで、何をしているか理解する
+
+### Step 2c: スコープ絞り込みの検討
+
+ワイルドカード (`*`) 付きルールについて、より狭いルールで十分かを検討する:
+
+- 使用の90%以上が特定パターンに該当する場合、狭いルールを提案する
+- 例: `git push` が45回中40回 `origin` 宛 → `Bash(git push origin *)` を提案
+- 残りのケースは手動承認で対応
+
+**判断例**:
+```
+スクリプト出力:
+  Bash(git push *)  count=45
+    flags: -u(12), --force(3)[!], --force-with-lease(2)[!]
+    args:  origin(40), main(25), feature/auth(5)
+
+分析:
+  1. 危険フラグ --force, --force-with-lease が計5回使用 → ask ガード必須
+  2. 全45回が origin リモート宛 → Bash(git push origin *) に絞れる
+  3. 基本リスク: HIGH（リモート影響、元に戻しにくい）
+     ask ガード付き: MED に軽減
+
+結論: allow Bash(git push origin *)
+      + ask Bash(git push --force *), Bash(git push --force-with-lease *)
+```
+
+### Step 2d: リスク分類と根拠の記述
+
+上記の分析を踏まえて、各ルールにリスクレベルと **具体的な根拠** を付ける:
+
+- **RATIONALE には実際の使用データを引用する**（「45回中40回は origin main へのpush」等）
+- Well-known 分類だけで終わらせない。フラグ/引数の分布に基づいて判断する
+- ガードルールを提案する場合、セットで記述する（allow + ask のペア）
 
 ## Step 3: Present recommendations
 
@@ -93,7 +141,7 @@ Group rules by risk level and present:
 
 | 振り分け基準 | 設定先 | 例 |
 |-------------|--------|-----|
-| どのプロジェクトでも使う汎用コマンド | グローバル | `Bash(ls:*)`, `Bash(git status *)`, `Glob`, `Grep` |
+| どのプロジェクトでも使う汎用コマンド | グローバル | `Bash(ls:*)`, `Bash(git status *)`, `WebSearch`, `WebFetch` |
 | プロジェクト固有のスクリプト・ツール | プロジェクト | `Bash(npm run *)`, `Bash(cargo *)`, `Bash(bin/*)` |
 | プロジェクト固有のパス指定 | プロジェクト | `Bash(docs/aidlc/bin/*)`, `Read(/**)`  |
 | ファイルツール（スコープ付き） | スコープによる | `Read(///tmp/**)` → グローバル、`Edit(/**)`(プロジェクト相対) → プロジェクト |
@@ -112,8 +160,8 @@ JSON スニペットを設定先ごとに分けて出力する：
     "deny": [],
     "ask": ["Bash(git push --force *)", "Bash(rm *)"],
     "allow": [
-      "Glob",
-      "Grep",
+      "WebSearch",
+      "WebFetch",
       "Bash(ls:*)",
       "Bash(git status *)",
       "Bash(git branch *)"

@@ -133,6 +133,70 @@ class TestClassifyFileScope(unittest.TestCase):
         self.assertEqual(scope, "project")
 
 
+class TestAnalyzeBashArgs(unittest.TestCase):
+    """Tests for analyze_bash_args()."""
+
+    def test_simple_flags(self):
+        result = sp.analyze_bash_args("ls", "ls -la /tmp")
+        self.assertIn("-la", result["flags"])
+        self.assertIn("/tmp", result["positionals"])
+
+    def test_git_push_with_force(self):
+        result = sp.analyze_bash_args("git push", "git push --force origin main")
+        self.assertIn("--force", result["flags"])
+        self.assertIn("origin", result["positionals"])
+        self.assertIn("main", result["positionals"])
+        self.assertIn("--force", result["dangerous_flags_found"])
+
+    def test_git_push_normal(self):
+        result = sp.analyze_bash_args("git push", "git push origin main")
+        self.assertEqual(result["flags"], [])
+        self.assertEqual(result["dangerous_flags_found"], [])
+        self.assertIn("origin", result["positionals"])
+
+    def test_git_branch_delete(self):
+        result = sp.analyze_bash_args("git branch", "git branch -D feature/old")
+        self.assertIn("-D", result["dangerous_flags_found"])
+
+    def test_rm_rf(self):
+        result = sp.analyze_bash_args("rm", "\\rm -rf /tmp/test")
+        self.assertIn("-rf", result["dangerous_flags_found"])
+
+    def test_no_args(self):
+        result = sp.analyze_bash_args("ls", "ls")
+        self.assertEqual(result["flags"], [])
+        self.assertEqual(result["positionals"], [])
+        self.assertEqual(result["dangerous_flags_found"], [])
+
+    def test_empty_input(self):
+        result = sp.analyze_bash_args("", "")
+        self.assertEqual(result["flags"], [])
+        self.assertEqual(result["dangerous_flags_found"], [])
+
+    def test_backslash_command(self):
+        result = sp.analyze_bash_args("git push", "\\git push -u origin main")
+        self.assertIn("-u", result["flags"])
+        self.assertIn("origin", result["positionals"])
+
+    def test_command_not_in_dangerous_map(self):
+        result = sp.analyze_bash_args("echo", "echo hello world")
+        self.assertEqual(result["dangerous_flags_found"], [])
+        self.assertIn("hello", result["positionals"])
+
+    def test_curl_dangerous_flag(self):
+        """Multi-token dangerous flag detection (e.g., -X POST)."""
+        result = sp.analyze_bash_args("curl", "curl -X POST https://example.com")
+        self.assertIn("-X POST", result["dangerous_flags_found"])
+
+    def test_git_reset_hard(self):
+        result = sp.analyze_bash_args("git reset", "git reset --hard HEAD~1")
+        self.assertIn("--hard", result["dangerous_flags_found"])
+
+    def test_gh_pr_create(self):
+        result = sp.analyze_bash_args("gh pr", "gh pr create --title test")
+        self.assertIn("create", result["dangerous_flags_found"])
+
+
 class TestGetProjectName(unittest.TestCase):
     """Tests for get_project_name()."""
 

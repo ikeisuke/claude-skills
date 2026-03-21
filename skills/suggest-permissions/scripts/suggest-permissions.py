@@ -152,6 +152,67 @@ def extract_bash_pattern(command):
     return base
 
 
+def analyze_bash_args(pattern, full_command):
+    """Analyze flags and arguments in a command relative to its extracted pattern.
+
+    Returns a dict with:
+        flags: list of flag tokens (starting with -)
+        positionals: list of positional arg tokens
+        dangerous_flags_found: list of flags matching DANGEROUS_FLAG_MAP
+    """
+    if not pattern or not full_command:
+        return {"flags": [], "positionals": [], "dangerous_flags_found": []}
+
+    first_line = full_command.strip().split("\n")[0]
+    # Strip the pattern prefix from the command to get the arguments
+    # Handle backslash-prefixed commands (e.g., \rm -> rm)
+    normalized = re.sub(r"^\\", "", first_line.strip())
+    # Remove the pattern prefix
+    if normalized.startswith(pattern):
+        remainder = normalized[len(pattern):].strip()
+    else:
+        # Pattern might not match literally (e.g., \git vs git)
+        remainder = first_line.strip()
+        parts = remainder.split()
+        # Skip tokens until we've consumed the pattern
+        pattern_parts = pattern.split()
+        skip = len(pattern_parts)
+        remainder = " ".join(parts[skip:]) if len(parts) > skip else ""
+
+    if not remainder:
+        return {"flags": [], "positionals": [], "dangerous_flags_found": []}
+
+    tokens = remainder.split()
+    flags = []
+    positionals = []
+    for token in tokens:
+        if token.startswith("-"):
+            flags.append(token)
+        else:
+            positionals.append(token)
+
+    # Check for dangerous flags
+    dangerous_found = []
+    dangerous_flags = DANGEROUS_FLAG_MAP.get(pattern, [])
+    for dflag in dangerous_flags:
+        dflag_parts = dflag.split()
+        # Single-token flag (e.g., "-D", "--force")
+        if len(dflag_parts) == 1:
+            if dflag in flags or dflag in positionals:
+                dangerous_found.append(dflag)
+        else:
+            # Multi-token dangerous pattern (e.g., "-X POST")
+            remainder_str = " ".join(tokens)
+            if dflag in remainder_str:
+                dangerous_found.append(dflag)
+
+    return {
+        "flags": flags,
+        "positionals": positionals,
+        "dangerous_flags_found": dangerous_found,
+    }
+
+
 def classify_file_scope(file_path, cwd=None):
     """Classify a file path into a scope category.
 
@@ -915,6 +976,14 @@ def main():
     # Generate rule suggestions
     rule_counts = Counter()
     rule_examples = defaultdict(list)
+    # Track argument/flag statistics per rule for deeper analysis
+    rule_arg_stats = defaultdict(lambda: {
+        "flag_counts": Counter(),
+        "positional_counts": Counter(),
+        "dangerous_flags_seen": Counter(),
+        "unique_commands": set(),
+        "pattern": "",  # the extracted pattern (e.g., "git push")
+    })
 
     for use in all_uses:
         tool = use["tool"]
@@ -930,16 +999,28 @@ def main():
                 rule = generate_bash_rule(pattern)
                 rule_counts[rule] += 1
                 cmd = inp.get("command", "")
-                if len(rule_examples[rule]) < 5:
-                    rule_examples[rule].append(cmd[:120])
+                if len(rule_examples[rule]) < 20:
+                    rule_examples[rule].append(cmd[:200])
+                # Analyze arguments/flags
+                stats = rule_arg_stats[rule]
+                stats["pattern"] = pattern
+                args_info = analyze_bash_args(pattern, cmd)
+                for flag in args_info["flags"]:
+                    stats["flag_counts"][flag] += 1
+                for pos in args_info["positionals"]:
+                    stats["positional_counts"][pos] += 1
+                for dflag in args_info["dangerous_flags_found"]:
+                    stats["dangerous_flags_seen"][dflag] += 1
+                if cmd and len(stats["unique_commands"]) < 30:
+                    stats["unique_commands"].add(cmd.split("\n")[0][:200])
         elif tool in FILE_TOOLS:
             fp = inp.get("file_path", "")
             cwd = use.get("cwd", "")
             scope, directory = classify_file_scope(fp, cwd)
             rule = generate_file_rule(tool, scope, directory)
             rule_counts[rule] += 1
-            if fp and len(rule_examples[rule]) < 5:
-                rule_examples[rule].append(fp[:120])
+            if fp and len(rule_examples[rule]) < 20:
+                rule_examples[rule].append(fp[:200])
         elif tool == "Agent":
             rule = "Agent"
             rule_counts[rule] += 1
@@ -947,8 +1028,8 @@ def main():
             # Other tools (WebFetch, MCP tools, etc.)
             rule = tool
             rule_counts[rule] += 1
-            if len(rule_examples[rule]) < 5:
-                rule_examples[rule].append(json.dumps(inp, ensure_ascii=False)[:120])
+            if len(rule_examples[rule]) < 20:
+                rule_examples[rule].append(json.dumps(inp, ensure_ascii=False)[:200])
 
     # Load existing rules (global + project)
     cwd = os.getcwd()
@@ -962,13 +1043,28 @@ def main():
         already = is_already_allowed(rule, existing_rules)
         if not args.show_all and already:
             continue
-        suggestions.append({
+        stats = rule_arg_stats.get(rule)
+        suggestion = {
             "rule": rule,
             "count": count,
             "already_allowed": already,
             "never_allow": is_never_allow(rule),
             "examples": rule_examples.get(rule, []),
-        })
+        }
+        # Add argument analysis for Bash rules
+        if stats and stats["pattern"]:
+            arg_analysis = {}
+            if stats["flag_counts"]:
+                arg_analysis["flags"] = dict(stats["flag_counts"].most_common(15))
+            if stats["positional_counts"]:
+                arg_analysis["positionals"] = dict(stats["positional_counts"].most_common(15))
+            if stats["dangerous_flags_seen"]:
+                arg_analysis["dangerous_flags_seen"] = dict(stats["dangerous_flags_seen"])
+            if stats["unique_commands"]:
+                arg_analysis["unique_commands"] = sorted(stats["unique_commands"])[:10]
+            if arg_analysis:
+                suggestion["arg_analysis"] = arg_analysis
+        suggestions.append(suggestion)
 
     if not suggestions:
         print("No rule suggestions found. Try lowering --min-count or using --show-all.")
@@ -996,6 +1092,19 @@ def main():
             print(f"  {r}")
         print()
 
+    # Dangerous usage warnings (show before the main table)
+    dangerous_suggestions = [s for s in suggestions if s.get("arg_analysis", {}).get("dangerous_flags_seen")]
+    if dangerous_suggestions:
+        print("!! Dangerous flags detected in actual usage:\n")
+        for s in dangerous_suggestions:
+            dflags = s["arg_analysis"]["dangerous_flags_seen"]
+            dflags_str = ", ".join(f"{f}({c}x)" for f, c in sorted(dflags.items(), key=lambda x: -x[1]))
+            print(f"  {s['rule']}  : {dflags_str}")
+            pattern = rule_arg_stats[s["rule"]]["pattern"]
+            guards = [f"Bash({pattern} {f} *)" for f in dflags]
+            print(f"    -> recommend ask guard: {', '.join(guards)}")
+        print()
+
     fmt = "{:<4} {:<6} {:<50} {}"
     print(fmt.format("", "COUNT", "RULE", "EXAMPLES"))
     print("-" * 110)
@@ -1007,8 +1116,32 @@ def main():
             status = "[!!]"
         else:
             status = f"[{i:>2}]"
-        examples_str = " | ".join(ex[:40] for ex in s["examples"][:2])
+        examples_str = " | ".join(ex[:50] for ex in s["examples"][:2])
         print(fmt.format(status, s["count"], s["rule"][:50], examples_str))
+
+        # Show argument breakdown for Bash rules with non-trivial usage
+        arg_analysis = s.get("arg_analysis", {})
+        if arg_analysis:
+            # Show top flags
+            flags = arg_analysis.get("flags", {})
+            dflags = arg_analysis.get("dangerous_flags_seen", {})
+            if flags:
+                flag_parts = []
+                for f, c in sorted(flags.items(), key=lambda x: -x[1])[:8]:
+                    marker = "[!]" if f in dflags else ""
+                    flag_parts.append(f"{f}({c}){marker}")
+                print(f"       flags: {', '.join(flag_parts)}")
+            # Show top positional args
+            positionals = arg_analysis.get("positionals", {})
+            if positionals:
+                pos_parts = [f"{p}({c})" for p, c in sorted(positionals.items(), key=lambda x: -x[1])[:8]]
+                print(f"       args:  {', '.join(pos_parts)}")
+            # Show deduplicated examples
+            unique_cmds = arg_analysis.get("unique_commands", [])
+            if unique_cmds:
+                print(f"       examples ({len(unique_cmds)}):")
+                for cmd in unique_cmds[:5]:
+                    print(f"         {cmd[:100]}")
 
     never_count = sum(1 for s in suggestions if s.get("never_allow"))
     if never_count:
