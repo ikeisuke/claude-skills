@@ -133,6 +133,78 @@ class TestClassifyFileScope(unittest.TestCase):
         self.assertEqual(scope, "project")
 
 
+class TestSplitChainedCommands(unittest.TestCase):
+    """Tests for split_chained_commands()."""
+
+    def test_single_command(self):
+        self.assertEqual(sp.split_chained_commands("git status"), ["git status"])
+
+    def test_and_chain(self):
+        self.assertEqual(
+            sp.split_chained_commands("git add . && git commit -m 'test'"),
+            ["git add .", "git commit -m 'test'"],
+        )
+
+    def test_or_chain(self):
+        self.assertEqual(
+            sp.split_chained_commands("test -f foo || echo missing"),
+            ["test -f foo", "echo missing"],
+        )
+
+    def test_semicolon_chain(self):
+        self.assertEqual(
+            sp.split_chained_commands("cd /tmp; ls -la"),
+            ["cd /tmp", "ls -la"],
+        )
+
+    def test_mixed_chain(self):
+        result = sp.split_chained_commands("git add . && git commit -m 'x'; git push")
+        self.assertEqual(len(result), 3)
+        self.assertEqual(result[0], "git add .")
+        self.assertEqual(result[2], "git push")
+
+    def test_pipe_not_split(self):
+        """Pipes should NOT be treated as command separators."""
+        self.assertEqual(
+            sp.split_chained_commands("git log | head -5"),
+            ["git log | head -5"],
+        )
+
+    def test_empty(self):
+        self.assertEqual(sp.split_chained_commands(""), [])
+        self.assertEqual(sp.split_chained_commands(None), [])
+
+
+class TestExtractAllBashPatterns(unittest.TestCase):
+    """Tests for extract_all_bash_patterns()."""
+
+    def test_single_command(self):
+        result = sp.extract_all_bash_patterns("git status")
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0][0], "git status")
+
+    def test_chained_commands(self):
+        result = sp.extract_all_bash_patterns("git add . && git push origin main")
+        self.assertEqual(len(result), 2)
+        self.assertEqual(result[0][0], "git add")
+        self.assertEqual(result[1][0], "git push")
+
+    def test_three_commands(self):
+        result = sp.extract_all_bash_patterns("ls -la && git status && git push origin main")
+        self.assertEqual(len(result), 3)
+        self.assertEqual(result[0][0], "ls")
+        self.assertEqual(result[1][0], "git status")
+        self.assertEqual(result[2][0], "git push")
+
+    def test_empty(self):
+        self.assertEqual(sp.extract_all_bash_patterns(""), [])
+        self.assertEqual(sp.extract_all_bash_patterns(None), [])
+
+    def test_preserves_single_command_text(self):
+        result = sp.extract_all_bash_patterns("git status && git push --force origin main")
+        self.assertEqual(result[1][1], "git push --force origin main")
+
+
 class TestAnalyzeBashArgs(unittest.TestCase):
     """Tests for analyze_bash_args()."""
 
@@ -195,6 +267,19 @@ class TestAnalyzeBashArgs(unittest.TestCase):
     def test_gh_pr_create(self):
         result = sp.analyze_bash_args("gh pr", "gh pr create --title test")
         self.assertIn("create", result["dangerous_flags_found"])
+
+    def test_chained_command_isolates_segment(self):
+        """analyze_bash_args should only analyze the matching segment in a chain."""
+        result = sp.analyze_bash_args("git push", "git status && git push --force origin main")
+        self.assertIn("--force", result["flags"])
+        self.assertIn("--force", result["dangerous_flags_found"])
+        # Should NOT include tokens from the first command
+        self.assertNotIn("status", result["positionals"])
+
+    def test_chained_command_first_segment(self):
+        result = sp.analyze_bash_args("git add", "git add . && git push origin main")
+        self.assertIn(".", result["positionals"])
+        self.assertNotIn("origin", result["positionals"])
 
 
 class TestGetProjectName(unittest.TestCase):
