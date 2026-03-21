@@ -71,23 +71,52 @@ class TestParsePermissionRule(unittest.TestCase):
         self.assertIsNone(result["pattern"])
 
 
-class TestNormalizeBashPattern(unittest.TestCase):
-    """Tests for normalize_bash_pattern()."""
+class TestGlobToRegex(unittest.TestCase):
+    """Tests for glob_to_regex()."""
+
+    def test_wildcard(self):
+        self.assertEqual(tp.glob_to_regex("git status *"), "git status .*")
 
     def test_colon_wildcard(self):
-        self.assertEqual(tp.normalize_bash_pattern("git add:*"), "git add *")
-
-    def test_space_wildcard(self):
-        self.assertEqual(tp.normalize_bash_pattern("git status *"), "git status *")
+        self.assertEqual(tp.glob_to_regex("git add:*"), "git add .*")
 
     def test_no_wildcard(self):
-        self.assertEqual(tp.normalize_bash_pattern("git status"), "git status")
-
-    def test_multiple_colon_wildcards(self):
-        self.assertEqual(tp.normalize_bash_pattern("cmd:* arg:*"), "cmd * arg *")
+        self.assertEqual(tp.glob_to_regex("ls -la"), "ls \\-la")
 
     def test_exact_command(self):
-        self.assertEqual(tp.normalize_bash_pattern("ls -la"), "ls -la")
+        self.assertEqual(tp.glob_to_regex("git status"), "git status")
+
+    def test_multiple_wildcards(self):
+        result = tp.glob_to_regex("cmd * arg *")
+        self.assertEqual(result, "cmd .* arg .*")
+
+    def test_regex_metachar_escaped(self):
+        """Regex metacharacters in the command should be escaped."""
+        result = tp.glob_to_regex("git log --format=%H *")
+        self.assertIn("%H", result)
+        self.assertTrue(result.endswith(".*"))
+
+    def test_dot_escaped(self):
+        """Dots in commands should be escaped to literal dots."""
+        result = tp.glob_to_regex("cat file.txt")
+        self.assertIn("file\\.txt", result)
+
+    def test_backslash_stripped(self):
+        """Leading backslash (alias bypass) should be stripped."""
+        self.assertEqual(tp.glob_to_regex("\\rm *"), "rm .*")
+
+    def test_backslash_with_subcommand(self):
+        self.assertEqual(tp.glob_to_regex("\\cp *"), "cp .*")
+
+
+class TestNormalizeBashPattern(unittest.TestCase):
+    """Tests for legacy normalize_bash_pattern behavior via glob_to_regex."""
+
+    def test_colon_wildcard(self):
+        self.assertEqual(tp.glob_to_regex("git add:*"), "git add .*")
+
+    def test_space_wildcard(self):
+        self.assertEqual(tp.glob_to_regex("git status *"), "git status .*")
 
 
 class TestNormalizeFilePath(unittest.TestCase):
@@ -103,10 +132,10 @@ class TestNormalizeFilePath(unittest.TestCase):
         self.assertEqual(tp.normalize_file_path("///tmp/**"), "/tmp/**")
 
     def test_home_path(self):
-        self.assertIsNone(tp.normalize_file_path("~/.ssh/**"))
+        self.assertEqual(tp.normalize_file_path("~/.ssh/**"), "~/.ssh/**")
 
     def test_home_path_dotenv(self):
-        self.assertIsNone(tp.normalize_file_path("~/.aws/**"))
+        self.assertEqual(tp.normalize_file_path("~/.aws/**"), "~/.aws/**")
 
     def test_already_relative(self):
         self.assertEqual(tp.normalize_file_path("src/**"), "src/**")
@@ -116,6 +145,18 @@ class TestNormalizeFilePath(unittest.TestCase):
 
     def test_specific_file(self):
         self.assertEqual(tp.normalize_file_path("/README.md"), "README.md")
+
+
+class TestDomainToRegex(unittest.TestCase):
+    """Tests for domain_to_regex()."""
+
+    def test_simple_domain(self):
+        result = tp.domain_to_regex("example.com")
+        self.assertEqual(result, ".*example\\.com.*")
+
+    def test_subdomain(self):
+        result = tp.domain_to_regex("docs.aws.amazon.com")
+        self.assertEqual(result, ".*docs\\.aws\\.amazon\\.com.*")
 
 
 class TestParseMcpTool(unittest.TestCase):
@@ -149,10 +190,12 @@ class TestTranslateToKiro(unittest.TestCase):
         }
         config = tp.translate_to_kiro(permissions, "test-agent", "Test agent")
         self.assertEqual(config["name"], "test-agent")
+        self.assertIn("glob", config["tools"])
+        self.assertIn("grep", config["tools"])
         self.assertIn("read", config["tools"])
         self.assertIn("write", config["tools"])
         self.assertIn("shell", config["tools"])
-        self.assertIn("git status *", config["toolsSettings"]["shell"]["allowedCommands"])
+        self.assertIn("git status .*", config["toolsSettings"]["shell"]["allowedCommands"])
         self.assertIn("**", config["toolsSettings"]["write"]["allowedPaths"])
 
     def test_deny_bash(self):
@@ -162,8 +205,8 @@ class TestTranslateToKiro(unittest.TestCase):
             "ask": [],
         }
         config = tp.translate_to_kiro(permissions, "test", "test")
-        self.assertIn("git add *", config["toolsSettings"]["shell"]["allowedCommands"])
-        self.assertIn("rm *", config["toolsSettings"]["shell"]["deniedCommands"])
+        self.assertIn("git add .*", config["toolsSettings"]["shell"]["allowedCommands"])
+        self.assertIn("rm .*", config["toolsSettings"]["shell"]["deniedCommands"])
 
     def test_allow_file_tools_in_allowed_tools(self):
         """Allow write tools should appear in allowedTools for auto-approval."""
@@ -175,8 +218,8 @@ class TestTranslateToKiro(unittest.TestCase):
         config = tp.translate_to_kiro(permissions, "test", "test")
         self.assertIn("write", config["allowedTools"])
 
-    def test_path_scoped_read_not_in_allowed_tools(self):
-        """Path-scoped Read should NOT be in allowedTools (Kiro has no read.allowedPaths)."""
+    def test_read_with_path_has_allowed_paths(self):
+        """Path-scoped Read should have allowedPaths in toolsSettings."""
         permissions = {
             "allow": ["Read(/**)", "Read(/src/**)"],
             "deny": [],
@@ -184,7 +227,9 @@ class TestTranslateToKiro(unittest.TestCase):
         }
         config = tp.translate_to_kiro(permissions, "test", "test")
         self.assertIn("read", config["tools"])
-        self.assertNotIn("allowedTools", config)
+        read_settings = config["toolsSettings"]["read"]
+        self.assertIn("**", read_settings["allowedPaths"])
+        self.assertIn("src/**", read_settings["allowedPaths"])
 
     def test_bare_read_in_allowed_tools(self):
         """Bare Read (no path) should appear in allowedTools."""
@@ -197,14 +242,26 @@ class TestTranslateToKiro(unittest.TestCase):
         self.assertIn("read", config["allowedTools"])
 
     def test_bare_glob_grep_in_allowed_tools(self):
-        """Bare Glob/Grep should appear in allowedTools."""
+        """Bare Glob/Grep should appear in allowedTools as separate tools."""
         permissions = {
             "allow": ["Glob", "Grep"],
             "deny": [],
             "ask": [],
         }
         config = tp.translate_to_kiro(permissions, "test", "test")
-        self.assertIn("read", config["allowedTools"])
+        self.assertIn("glob", config["allowedTools"])
+        self.assertIn("grep", config["allowedTools"])
+
+    def test_glob_grep_are_separate_tools(self):
+        """Glob and Grep should map to separate Kiro tools, not 'read'."""
+        permissions = {
+            "allow": ["Glob", "Grep"],
+            "deny": [],
+            "ask": [],
+        }
+        config = tp.translate_to_kiro(permissions, "test", "test")
+        self.assertIn("glob", config["tools"])
+        self.assertIn("grep", config["tools"])
 
     def test_ask_file_tools_not_in_allowed_tools(self):
         """Ask file tools should NOT appear in allowedTools."""
@@ -219,7 +276,7 @@ class TestTranslateToKiro(unittest.TestCase):
         self.assertNotIn("allowedTools", config)
 
     def test_ask_overrides_broad_allow(self):
-        """Ask rules should prevent broad allow wildcards from auto-approving."""
+        """Ask rules should prevent broad allow from auto-approving."""
         permissions = {
             "allow": ["Bash(git push *)"],
             "deny": [],
@@ -227,10 +284,8 @@ class TestTranslateToKiro(unittest.TestCase):
         }
         config = tp.translate_to_kiro(permissions, "test", "test")
         self.assertIn("shell", config["tools"])
-        # The broad "git push *" should be removed from allowedCommands
-        # because it would override the ask intent for --force
         shell = config.get("toolsSettings", {}).get("shell", {})
-        self.assertNotIn("git push *", shell.get("allowedCommands", []))
+        self.assertNotIn("git push .*", shell.get("allowedCommands", []))
 
     def test_ask_does_not_remove_unrelated_allow(self):
         """Ask rules should not affect unrelated allow commands."""
@@ -241,14 +296,12 @@ class TestTranslateToKiro(unittest.TestCase):
         }
         config = tp.translate_to_kiro(permissions, "test", "test")
         shell = config["toolsSettings"]["shell"]
-        # git push * should be removed (covers ask pattern)
-        self.assertNotIn("git push *", shell["allowedCommands"])
-        # unrelated commands should remain
-        self.assertIn("git status *", shell["allowedCommands"])
-        self.assertIn("ls *", shell["allowedCommands"])
+        self.assertNotIn("git push .*", shell["allowedCommands"])
+        self.assertIn("git status .*", shell["allowedCommands"])
+        self.assertIn("ls .*", shell["allowedCommands"])
 
-    def test_deny_only_bash_no_shell(self):
-        """deny-only Bash rules should NOT enable shell tool or emit shell settings."""
+    def test_deny_only_bash(self):
+        """deny-only Bash rules should emit deniedCommands."""
         permissions = {
             "allow": [],
             "deny": ["Bash(rm -rf *)"],
@@ -256,8 +309,8 @@ class TestTranslateToKiro(unittest.TestCase):
         }
         config = tp.translate_to_kiro(permissions, "test", "test")
         self.assertNotIn("shell", config["tools"])
-        # No shell settings should be emitted without shell in tools
-        self.assertNotIn("toolsSettings", config)
+        denied = config["toolsSettings"]["shell"]["deniedCommands"]
+        self.assertTrue(any("rm" in d and "rf" in d for d in denied))
 
     def test_ask_bash(self):
         """ask rules should add shell to tools but not to allowedCommands."""
@@ -268,7 +321,6 @@ class TestTranslateToKiro(unittest.TestCase):
         }
         config = tp.translate_to_kiro(permissions, "test", "test")
         self.assertIn("shell", config["tools"])
-        # Should NOT have allowedCommands for ask rules
         shell_settings = config.get("toolsSettings", {}).get("shell", {})
         self.assertNotIn("allowedCommands", shell_settings)
 
@@ -305,17 +357,121 @@ class TestTranslateToKiro(unittest.TestCase):
         self.assertIn("@git", config["tools"])
         self.assertNotIn("allowedTools", config)
 
-    def test_skipped_tools(self):
+    def test_websearch_allow(self):
+        """WebSearch allow should map to web_search tool."""
         permissions = {
-            "allow": ["WebSearch", "WebFetch", "Agent", "WebFetch(domain:example.com)"],
+            "allow": ["WebSearch"],
             "deny": [],
             "ask": [],
         }
         config = tp.translate_to_kiro(permissions, "test", "test")
-        # No tools should be added for skipped rules
-        self.assertEqual(config["tools"], [])
-        self.assertIn("_skippedClaudeRules", config)
-        self.assertEqual(len(config["_skippedClaudeRules"]), 4)
+        self.assertIn("web_search", config["tools"])
+        self.assertIn("web_search", config["allowedTools"])
+
+    def test_webfetch_allow(self):
+        """Bare WebFetch allow should map to web_fetch tool."""
+        permissions = {
+            "allow": ["WebFetch"],
+            "deny": [],
+            "ask": [],
+        }
+        config = tp.translate_to_kiro(permissions, "test", "test")
+        self.assertIn("web_fetch", config["tools"])
+        self.assertIn("web_fetch", config["allowedTools"])
+
+    def test_webfetch_domain_allow(self):
+        """WebFetch(domain:...) allow should add to web_fetch.trusted."""
+        permissions = {
+            "allow": ["WebFetch(domain:example.com)"],
+            "deny": [],
+            "ask": [],
+        }
+        config = tp.translate_to_kiro(permissions, "test", "test")
+        self.assertIn("web_fetch", config["tools"])
+        self.assertIn(".*example\\.com.*",
+                       config["toolsSettings"]["web_fetch"]["trusted"])
+
+    def test_webfetch_domain_deny(self):
+        """WebFetch(domain:...) deny should add to web_fetch.blocked."""
+        permissions = {
+            "allow": [],
+            "deny": ["WebFetch(domain:evil.com)"],
+            "ask": [],
+        }
+        config = tp.translate_to_kiro(permissions, "test", "test")
+        self.assertIn(".*evil\\.com.*",
+                       config["toolsSettings"]["web_fetch"]["blocked"])
+
+    def test_agent_allow(self):
+        """Agent allow should map to use_subagent."""
+        permissions = {
+            "allow": ["Agent"],
+            "deny": [],
+            "ask": [],
+        }
+        config = tp.translate_to_kiro(permissions, "test", "test")
+        self.assertIn("use_subagent", config["tools"])
+        self.assertIn("use_subagent", config["allowedTools"])
+
+    def test_agent_ask(self):
+        """Agent ask should add use_subagent to tools but not allowedTools."""
+        permissions = {
+            "allow": [],
+            "deny": [],
+            "ask": ["Agent"],
+        }
+        config = tp.translate_to_kiro(permissions, "test", "test")
+        self.assertIn("use_subagent", config["tools"])
+        self.assertNotIn("allowedTools", config)
+
+    def test_read_deny_has_denied_paths(self):
+        """Read deny rules should populate read.deniedPaths."""
+        permissions = {
+            "allow": ["Read(/**)"],
+            "deny": ["Read(.env)", "Read(.env.*)"],
+            "ask": [],
+        }
+        config = tp.translate_to_kiro(permissions, "test", "test")
+        read_settings = config["toolsSettings"]["read"]
+        self.assertIn("**", read_settings["allowedPaths"])
+        self.assertIn(".env", read_settings["deniedPaths"])
+        self.assertIn(".env.*", read_settings["deniedPaths"])
+
+    def test_write_deny_has_denied_paths(self):
+        """Write/Edit deny rules should populate write.deniedPaths."""
+        permissions = {
+            "allow": ["Edit(/**)"],
+            "deny": ["Edit(.env)"],
+            "ask": [],
+        }
+        config = tp.translate_to_kiro(permissions, "test", "test")
+        write_settings = config["toolsSettings"]["write"]
+        self.assertIn("**", write_settings["allowedPaths"])
+        self.assertIn(".env", write_settings["deniedPaths"])
+
+    def test_home_path_deny_in_denied_paths(self):
+        """Home-relative deny rules should be in read.deniedPaths."""
+        permissions = {
+            "allow": ["Read(/**)"],
+            "deny": ["Read(~/.ssh/**)", "Read(~/.aws/**)"],
+            "ask": [],
+        }
+        config = tp.translate_to_kiro(permissions, "test", "test")
+        self.assertIn("read", config["tools"])
+        read_settings = config["toolsSettings"]["read"]
+        self.assertIn("~/.ssh/**", read_settings["deniedPaths"])
+        self.assertIn("~/.aws/**", read_settings["deniedPaths"])
+
+    def test_skipped_tools(self):
+        permissions = {
+            "allow": ["Agent", "Skill(my-skill)"],
+            "deny": [],
+            "ask": [],
+        }
+        config = tp.translate_to_kiro(permissions, "test", "test")
+        # Agent should map to use_subagent, Skill should be skipped
+        self.assertIn("use_subagent", config["tools"])
+        self.assertIn("Skill(my-skill)", config["_skippedClaudeRules"])
 
     def test_skill_skipped(self):
         permissions = {
@@ -324,7 +480,6 @@ class TestTranslateToKiro(unittest.TestCase):
             "ask": [],
         }
         config = tp.translate_to_kiro(permissions, "test", "test")
-        self.assertEqual(config["tools"], [])
         self.assertIn("Skill(my-skill)", config["_skippedClaudeRules"])
 
     def test_write_paths_deduplicated(self):
@@ -337,29 +492,16 @@ class TestTranslateToKiro(unittest.TestCase):
         paths = config["toolsSettings"]["write"]["allowedPaths"]
         self.assertEqual(paths, ["**", "src/**"])
 
-    def test_home_path_in_deny_skipped(self):
-        """Home-relative deny rules should appear in _skippedClaudeRules."""
-        permissions = {
-            "allow": ["Read(/**)"],
-            "deny": ["Read(~/.ssh/**)", "Read(~/.aws/**)"],
-            "ask": [],
-        }
-        config = tp.translate_to_kiro(permissions, "test", "test")
-        self.assertIn("read", config["tools"])
-        self.assertNotIn("toolsSettings", config)
-        self.assertIn("Read(~/.ssh/**)", config["_skippedClaudeRules"])
-        self.assertIn("Read(~/.aws/**)", config["_skippedClaudeRules"])
-
-    def test_unmappable_write_path_skipped(self):
-        """Write rules with unmappable home paths should be skipped, not enable write."""
+    def test_home_write_path_translated(self):
+        """Write rules with home paths should be translated to write.allowedPaths."""
         permissions = {
             "allow": ["Write(~/.ssh/config)"],
             "deny": [],
             "ask": [],
         }
         config = tp.translate_to_kiro(permissions, "test", "test")
-        self.assertNotIn("write", config["tools"])
-        self.assertIn("Write(~/.ssh/config)", config["_skippedClaudeRules"])
+        self.assertIn("write", config["tools"])
+        self.assertIn("~/.ssh/config", config["toolsSettings"]["write"]["allowedPaths"])
 
     def test_write_without_pattern_enables_write(self):
         """Write without a path pattern should enable write tool."""
@@ -370,17 +512,6 @@ class TestTranslateToKiro(unittest.TestCase):
         }
         config = tp.translate_to_kiro(permissions, "test", "test")
         self.assertIn("write", config["tools"])
-
-    def test_deny_file_rules_in_skipped(self):
-        """Deny rules for file tools should appear in _skippedClaudeRules."""
-        permissions = {
-            "allow": ["Edit(/**)"],
-            "deny": ["Read(.env)", "Edit(.env)"],
-            "ask": [],
-        }
-        config = tp.translate_to_kiro(permissions, "test", "test")
-        self.assertIn("Read(.env)", config["_skippedClaudeRules"])
-        self.assertIn("Edit(.env)", config["_skippedClaudeRules"])
 
     def test_empty_permissions(self):
         permissions = {"allow": [], "deny": [], "ask": []}
@@ -393,11 +524,13 @@ class TestTranslateToKiro(unittest.TestCase):
             "allow": [
                 "Glob", "Grep", "Read(/**)", "Edit(/**)", "Write(/**)",
                 "Bash(git status *)", "Bash(git add:*)", "Bash(ls:*)",
-                "mcp__codex__codex",
+                "mcp__codex__codex", "WebSearch", "WebFetch",
+                "WebFetch(domain:docs.example.com)", "Agent",
             ],
             "deny": [
                 "Read(.env)", "Read(~/.ssh/**)",
                 "Bash(rm -rf *)",
+                "WebFetch(domain:evil.com)",
             ],
             "ask": [
                 "Bash(git push --force *)",
@@ -407,27 +540,47 @@ class TestTranslateToKiro(unittest.TestCase):
         config = tp.translate_to_kiro(permissions, "my-agent", "My agent config")
 
         # All tool types present
+        self.assertIn("glob", config["tools"])
+        self.assertIn("grep", config["tools"])
         self.assertIn("read", config["tools"])
         self.assertIn("write", config["tools"])
         self.assertIn("shell", config["tools"])
+        self.assertIn("web_search", config["tools"])
+        self.assertIn("web_fetch", config["tools"])
+        self.assertIn("use_subagent", config["tools"])
         self.assertIn("@codex", config["tools"])
         self.assertIn("@git", config["tools"])
 
-        # allowedTools for MCP allow only
+        # allowedTools
         self.assertIn("@codex/codex", config["allowedTools"])
+        self.assertIn("web_search", config["allowedTools"])
+        self.assertIn("web_fetch", config["allowedTools"])
+        self.assertIn("use_subagent", config["allowedTools"])
         self.assertNotIn("@git/git_push", config.get("allowedTools", []))
 
         # Shell settings
         shell = config["toolsSettings"]["shell"]
-        self.assertIn("git status *", shell["allowedCommands"])
-        self.assertIn("git add *", shell["allowedCommands"])
-        self.assertIn("ls *", shell["allowedCommands"])
-        self.assertIn("rm -rf *", shell["deniedCommands"])
-        # ask rule should NOT be in allowedCommands
-        self.assertNotIn("git push --force *", shell.get("allowedCommands", []))
+        self.assertIn("git status .*", shell["allowedCommands"])
+        self.assertIn("git add .*", shell["allowedCommands"])
+        self.assertIn("ls .*", shell["allowedCommands"])
+        self.assertTrue(any("rm" in d and "rf" in d for d in shell["deniedCommands"]))
+        self.assertFalse(any("git push" in a and "force" in a for a in shell.get("allowedCommands", [])))
+
+        # Read settings (with deny)
+        read_settings = config["toolsSettings"]["read"]
+        self.assertIn("**", read_settings["allowedPaths"])
+        self.assertIn(".env", read_settings["deniedPaths"])
 
         # Write paths
         self.assertIn("**", config["toolsSettings"]["write"]["allowedPaths"])
+
+        # web_fetch settings
+        wf = config["toolsSettings"]["web_fetch"]
+        self.assertIn(".*docs\\.example\\.com.*", wf["trusted"])
+        self.assertIn(".*evil\\.com.*", wf["blocked"])
+
+        # Home path deny should be in deniedPaths, not skipped
+        self.assertIn("~/.ssh/**", read_settings["deniedPaths"])
 
 
 if __name__ == "__main__":
