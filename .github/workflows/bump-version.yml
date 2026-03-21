@@ -10,6 +10,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      statuses: write
     steps:
       - uses: actions/checkout@v4
         with:
@@ -49,3 +50,13 @@ jobs:
           git diff --cached --quiet && exit 0
           git commit -m "chore: bump plugin version to $(jq -r '.metadata.version' .claude-plugin/marketplace.json)"
           git push
+
+      - name: Set success status on HEAD
+        run: |
+          sha=$(git rev-parse HEAD)
+          gh api "repos/${{ github.repository }}/statuses/${sha}" \
+            -f state=success \
+            -f context="Bump patch version" \
+            -f description="Version bump completed"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
