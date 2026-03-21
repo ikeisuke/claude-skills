@@ -49,7 +49,7 @@ python3 /path/to/skills/translate-permissions/scripts/translate-permissions.py [
 
 出力 JSON を確認し、以下を説明する:
 
-- `_skippedClaudeRules` に含まれるルール — Kiro に対応がないためスキップされたもの（ホームディレクトリ相対パスの deny 等）
+- `_skippedClaudeRules` に含まれるルール — Kiro に対応がないためスキップされたもの（Skill ルール、MCP deny 等）
 - MCP ツール参照 (`@server/tool`) — サーバー定義 (`mcpServers`) は手動追加が必要
 - Bash パターンの正規表現変換 — Claude の glob (`*`) が Kiro の regex (`.*`) に変換されている点を確認
 - `toolsSettings` の各ツール設定 — `read`/`write`/`glob`/`grep` の `allowedPaths`/`deniedPaths`、`shell` の `allowedCommands`/`deniedCommands`、`web_fetch` の `trusted`/`blocked`

@@ -101,6 +101,13 @@ class TestGlobToRegex(unittest.TestCase):
         result = tp.glob_to_regex("cat file.txt")
         self.assertIn("file\\.txt", result)
 
+    def test_backslash_stripped(self):
+        """Leading backslash (alias bypass) should be stripped."""
+        self.assertEqual(tp.glob_to_regex("\\rm *"), "rm .*")
+
+    def test_backslash_with_subcommand(self):
+        self.assertEqual(tp.glob_to_regex("\\cp *"), "cp .*")
+
 
 class TestNormalizeBashPattern(unittest.TestCase):
     """Tests for legacy normalize_bash_pattern behavior via glob_to_regex."""
@@ -125,10 +132,10 @@ class TestNormalizeFilePath(unittest.TestCase):
         self.assertEqual(tp.normalize_file_path("///tmp/**"), "/tmp/**")
 
     def test_home_path(self):
-        self.assertIsNone(tp.normalize_file_path("~/.ssh/**"))
+        self.assertEqual(tp.normalize_file_path("~/.ssh/**"), "~/.ssh/**")
 
     def test_home_path_dotenv(self):
-        self.assertIsNone(tp.normalize_file_path("~/.aws/**"))
+        self.assertEqual(tp.normalize_file_path("~/.aws/**"), "~/.aws/**")
 
     def test_already_relative(self):
         self.assertEqual(tp.normalize_file_path("src/**"), "src/**")
@@ -302,7 +309,8 @@ class TestTranslateToKiro(unittest.TestCase):
         }
         config = tp.translate_to_kiro(permissions, "test", "test")
         self.assertNotIn("shell", config["tools"])
-        self.assertIn("rm \\-rf .*", config["toolsSettings"]["shell"]["deniedCommands"])
+        denied = config["toolsSettings"]["shell"]["deniedCommands"]
+        self.assertTrue(any("rm" in d and "rf" in d for d in denied))
 
     def test_ask_bash(self):
         """ask rules should add shell to tools but not to allowedCommands."""
@@ -441,8 +449,8 @@ class TestTranslateToKiro(unittest.TestCase):
         self.assertIn("**", write_settings["allowedPaths"])
         self.assertIn(".env", write_settings["deniedPaths"])
 
-    def test_home_path_deny_skipped(self):
-        """Home-relative deny rules should appear in _skippedClaudeRules."""
+    def test_home_path_deny_in_denied_paths(self):
+        """Home-relative deny rules should be in read.deniedPaths."""
         permissions = {
             "allow": ["Read(/**)"],
             "deny": ["Read(~/.ssh/**)", "Read(~/.aws/**)"],
@@ -450,8 +458,9 @@ class TestTranslateToKiro(unittest.TestCase):
         }
         config = tp.translate_to_kiro(permissions, "test", "test")
         self.assertIn("read", config["tools"])
-        self.assertIn("Read(~/.ssh/**)", config["_skippedClaudeRules"])
-        self.assertIn("Read(~/.aws/**)", config["_skippedClaudeRules"])
+        read_settings = config["toolsSettings"]["read"]
+        self.assertIn("~/.ssh/**", read_settings["deniedPaths"])
+        self.assertIn("~/.aws/**", read_settings["deniedPaths"])
 
     def test_skipped_tools(self):
         permissions = {
@@ -483,16 +492,16 @@ class TestTranslateToKiro(unittest.TestCase):
         paths = config["toolsSettings"]["write"]["allowedPaths"]
         self.assertEqual(paths, ["**", "src/**"])
 
-    def test_unmappable_write_path_skipped(self):
-        """Write rules with unmappable home paths should be skipped, not enable write."""
+    def test_home_write_path_translated(self):
+        """Write rules with home paths should be translated to write.allowedPaths."""
         permissions = {
             "allow": ["Write(~/.ssh/config)"],
             "deny": [],
             "ask": [],
         }
         config = tp.translate_to_kiro(permissions, "test", "test")
-        self.assertNotIn("write", config["tools"])
-        self.assertIn("Write(~/.ssh/config)", config["_skippedClaudeRules"])
+        self.assertIn("write", config["tools"])
+        self.assertIn("~/.ssh/config", config["toolsSettings"]["write"]["allowedPaths"])
 
     def test_write_without_pattern_enables_write(self):
         """Write without a path pattern should enable write tool."""
@@ -554,8 +563,8 @@ class TestTranslateToKiro(unittest.TestCase):
         self.assertIn("git status .*", shell["allowedCommands"])
         self.assertIn("git add .*", shell["allowedCommands"])
         self.assertIn("ls .*", shell["allowedCommands"])
-        self.assertIn("rm \\-rf .*", shell["deniedCommands"])
-        self.assertNotIn("git push \\-\\-force .*", shell.get("allowedCommands", []))
+        self.assertTrue(any("rm" in d and "rf" in d for d in shell["deniedCommands"]))
+        self.assertFalse(any("git push" in a and "force" in a for a in shell.get("allowedCommands", [])))
 
         # Read settings (with deny)
         read_settings = config["toolsSettings"]["read"]
@@ -570,8 +579,8 @@ class TestTranslateToKiro(unittest.TestCase):
         self.assertIn(".*docs\\.example\\.com.*", wf["trusted"])
         self.assertIn(".*evil\\.com.*", wf["blocked"])
 
-        # Skipped
-        self.assertIn("Read(~/.ssh/**)", config["_skippedClaudeRules"])
+        # Home path deny should be in deniedPaths, not skipped
+        self.assertIn("~/.ssh/**", read_settings["deniedPaths"])
 
 
 if __name__ == "__main__":

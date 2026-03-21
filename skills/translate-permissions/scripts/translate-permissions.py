@@ -136,8 +136,13 @@ def glob_to_regex(pattern):
     - 'git add:*' -> 'git add .*'
     - 'git status *' -> 'git status .*'
     - 'ls -la' -> 'ls -la' (exact match, no wildcard)
+    - '\\rm *' -> 'rm .*' (strip alias-bypass backslash)
     - Escapes regex metacharacters except * which becomes .*
     """
+    # Strip leading backslash (alias bypass, e.g., \rm -> rm)
+    if pattern.startswith("\\"):
+        pattern = pattern[1:]
+
     # First, replace colon-wildcard with space-wildcard
     pattern = pattern.replace(":*", " *")
 
@@ -163,8 +168,9 @@ def normalize_file_path(pattern):
 
     Returns normalized path string or None if unmappable.
     """
+    # Home-relative paths: pass through as-is (Kiro supports ~/... in paths)
     if pattern.startswith("~"):
-        return None
+        return pattern
 
     # Triple-slash: absolute path (Claude convention)
     if pattern.startswith("///"):
