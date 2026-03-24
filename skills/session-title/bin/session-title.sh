@@ -42,24 +42,30 @@ get_parent_tty() {
   return 1
 }
 
-# --- Set title (common to all terminals) ---
+# --- Determine TTY device ---
 PARENT_TTY=$(get_parent_tty)
+# Fallback to /dev/tty (controlling terminal of the current process)
+if [ -z "$PARENT_TTY" ] || [ ! -w "$PARENT_TTY" ]; then
+  if [ -w /dev/tty ]; then
+    PARENT_TTY=/dev/tty
+  fi
+fi
+
+# --- Set title ---
 if [ -n "$PARENT_TTY" ] && [ -w "$PARENT_TTY" ]; then
   # Tab title via standard escape sequence
   printf '\033]0;%s\007' "$TITLE" > "$PARENT_TTY" 2>/dev/null
 
-  # Badge support (iTerm2 and WezTerm support iTerm2 badge escape sequence)
-  case "${TERM_PROGRAM:-}" in
-    iTerm.app|WezTerm)
-      BADGE_TEXT="$LABEL1"
-      [ -n "$LABEL2" ] && BADGE_TEXT="$BADGE_TEXT
+  # iTerm2 badge (WezTerm does not support SetBadgeFormat)
+  if [ "${TERM_PROGRAM:-}" = "iTerm.app" ]; then
+    BADGE_TEXT="$LABEL1"
+    [ -n "$LABEL2" ] && BADGE_TEXT="$BADGE_TEXT
 $LABEL2"
-      [ -n "$LABEL3" ] && BADGE_TEXT="$BADGE_TEXT
+    [ -n "$LABEL3" ] && BADGE_TEXT="$BADGE_TEXT
 $LABEL3"
-      BADGE=$(printf '%s' "$BADGE_TEXT" | base64 | tr -d '\r\n')
-      printf "\033]1337;SetBadgeFormat=%s\007" "$BADGE" > "$PARENT_TTY" 2>/dev/null
-      ;;
-  esac
+    BADGE=$(printf '%s' "$BADGE_TEXT" | base64 | tr -d '\r\n')
+    printf "\033]1337;SetBadgeFormat=%s\007" "$BADGE" > "$PARENT_TTY" 2>/dev/null
+  fi
 fi
 
 exit 0

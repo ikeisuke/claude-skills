@@ -35,7 +35,7 @@ All arguments must be quoted. On error, skip silently (never block workflow).
 | macOS | iTerm2 | OSC escape sequence | iTerm2 escape sequence |
 | macOS | Terminal.app | OSC escape sequence | Not supported |
 | Linux/WSL2 | Windows Terminal | OSC escape sequence | Not supported |
-| Linux/WSL2 | WezTerm | OSC escape sequence | iTerm2-compatible escape sequence |
+| Linux/WSL2 | WezTerm | OSC escape sequence | Not supported |
 | Any | Other | OSC escape sequence | Not supported |
 
 Unsupported OS (not macOS/Linux): silently exits 0.
