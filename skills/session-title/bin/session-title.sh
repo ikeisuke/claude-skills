@@ -54,7 +54,7 @@ fi
 # --- Set title ---
 if [ -n "$PARENT_TTY" ] && [ -w "$PARENT_TTY" ]; then
   # Tab title via standard escape sequence
-  printf '\033]0;%s\007' "$TITLE" > "$PARENT_TTY" 2>/dev/null
+  printf '\033]2;%s\007' "$TITLE" > "$PARENT_TTY" 2>/dev/null
 
   # iTerm2 badge (WezTerm does not support SetBadgeFormat)
   if [ "${TERM_PROGRAM:-}" = "iTerm.app" ]; then
