@@ -1,16 +1,17 @@
 ---
 name: session-title
 description: >
-  macOS専用: Sets terminal tab title and iTerm2 badge for session identification.
+  Sets terminal tab title and badge for session identification.
+  Supports macOS (iTerm2, Terminal.app) and Linux/WSL2 (Windows Terminal, WezTerm).
   Triggers on "セッションタイトル", "set session title", "session-title",
-  or requests to label the current terminal session. Requires macOS (uses osascript).
-  On non-macOS, silently skipped.
+  or requests to label the current terminal session.
+  On unsupported OS, silently skipped.
 argument-hint: "{label1} {label2} {label3}"
 ---
 
-# Session Title (macOS)
+# Session Title
 
-Set terminal tab title and iTerm2 badge to identify sessions.
+Set terminal tab title and badge to identify sessions.
 
 ## Usage
 
@@ -27,12 +28,14 @@ Determine labels from context:
 
 All arguments must be quoted. On error, skip silently (never block workflow).
 
-## Supported Terminals (macOS only)
+## Supported Terminals
 
-| Terminal | Tab Title | Badge |
-|----------|-----------|-------|
-| iTerm2 | TTY escape sequence | iTerm2 escape sequence |
-| Terminal.app | osascript | Not supported |
-| Other (macOS) | TTY escape sequence | Not supported |
+| Platform | Terminal | Tab Title | Badge |
+|----------|----------|-----------|-------|
+| macOS | iTerm2 | OSC escape sequence | iTerm2 escape sequence |
+| macOS | Terminal.app | OSC escape sequence | Not supported |
+| Linux/WSL2 | Windows Terminal | OSC escape sequence | Not supported |
+| Linux/WSL2 | WezTerm | OSC escape sequence | Not supported |
+| Any | Other | OSC escape sequence | Not supported |
 
-Non-macOS environments: silently exits 0.
+Unsupported OS (not macOS/Linux): silently exits 0.
