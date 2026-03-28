@@ -21,10 +21,12 @@ if [ -z "$LABEL1" ]; then
   exit 0
 fi
 
-# Build title from non-empty labels
-TITLE="$LABEL1"
-[ -n "$LABEL2" ] && TITLE="$TITLE / $LABEL2"
-[ -n "$LABEL3" ] && TITLE="$TITLE / $LABEL3"
+# Build titles: tab (compact) and window (full detail)
+TAB_TITLE="$LABEL1"
+[ -n "$LABEL2" ] && TAB_TITLE="$TAB_TITLE / $LABEL2"
+
+WIN_TITLE="$TAB_TITLE"
+[ -n "$LABEL3" ] && WIN_TITLE="$WIN_TITLE / $LABEL3"
 
 # --- Find parent TTY device ---
 get_parent_tty() {
@@ -43,8 +45,16 @@ get_parent_tty() {
 }
 
 # --- Determine TTY device ---
-PARENT_TTY=$(get_parent_tty)
-# Fallback to /dev/tty (controlling terminal of the current process)
+# Priority: GPG_TTY (most reliable in sandboxed environments)
+#         > get_parent_tty (ps-based, fails in sandbox)
+#         > /dev/tty (controlling terminal, may not exist in sandbox)
+PARENT_TTY=""
+if [ -n "${GPG_TTY:-}" ] && [ -w "$GPG_TTY" ]; then
+  PARENT_TTY="$GPG_TTY"
+fi
+if [ -z "$PARENT_TTY" ]; then
+  PARENT_TTY=$(get_parent_tty)
+fi
 if [ -z "$PARENT_TTY" ] || [ ! -w "$PARENT_TTY" ]; then
   if [ -w /dev/tty ]; then
     PARENT_TTY=/dev/tty
@@ -53,8 +63,9 @@ fi
 
 # --- Set title ---
 if [ -n "$PARENT_TTY" ] && [ -w "$PARENT_TTY" ]; then
-  # Tab title via standard escape sequence
-  printf '\033]2;%s\007' "$TITLE" > "$PARENT_TTY" 2>/dev/null
+  # Tab title (OSC 1: compact) and window title (OSC 2: full detail)
+  printf '\033]1;%s\007' "$TAB_TITLE" > "$PARENT_TTY" 2>/dev/null
+  printf '\033]2;%s\007' "$WIN_TITLE" > "$PARENT_TTY" 2>/dev/null
 
   # iTerm2 badge (WezTerm does not support SetBadgeFormat)
   if [ "${TERM_PROGRAM:-}" = "iTerm.app" ]; then
