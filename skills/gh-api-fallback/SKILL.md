@@ -38,7 +38,7 @@ gh pr edit {number} --body-file /tmp/pr-body.md
 **代替 (REST PATCH):**
 
 ```bash
-cat /tmp/pr-body.md | gh api repos/{owner}/{repo}/pulls/{number} -X PATCH -f body=@- --jq '.html_url'
+cat /tmp/pr-body.md | gh api repos/{owner}/{repo}/pulls/{number} -X PATCH -F body=@- --jq '.html_url'
 ```
 
 ### Draft PR → Ready for Review
@@ -76,13 +76,13 @@ gh api repos/{owner}/{repo}/pulls/{number} -X PATCH -f title="新しいタイト
 ### PR ラベル追加
 
 ```bash
-gh api repos/{owner}/{repo}/issues/{number}/labels -X POST -f "labels[]=bug" -f "labels[]=enhancement" --jq '.[].name'
+gh api repos/{owner}/{repo}/issues/{number}/labels -X POST -F "labels[]=bug" -F "labels[]=enhancement" --jq '.[].name'
 ```
 
 ### PR レビュアー追加
 
 ```bash
-gh api repos/{owner}/{repo}/pulls/{number}/requested_reviewers -X POST -f "reviewers[]=username" --jq '.requested_reviewers[].login'
+gh api repos/{owner}/{repo}/pulls/{number}/requested_reviewers -X POST -F "reviewers[]=username" --jq '.requested_reviewers[].login'
 ```
 
 ## Diagnosing Scope Errors
@@ -114,9 +114,9 @@ User: 「gh api 代替コマンドを教えて」
 
 ### GraphQL mutation が `null` を返す
 
-node_id が正しいか確認する。PR の node_id は `PR_` プレフィックスで始まる。Issues の node_id とは異なる。
+node_id が正しいか確認する。Step 1 で取得した PR の node_id をそのまま使うこと。Issues の node_id とは異なる。
 
-### `-f body=@-` でパイプが動作しない
+### `-F body=@-` でパイプが動作しない
 
 stdin にデータが渡されていることを確認する。ファイルが空でないか、パイプの前段でエラーが出ていないかチェックする。
 
