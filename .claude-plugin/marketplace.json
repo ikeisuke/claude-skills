@@ -15,6 +15,7 @@
       "source": "./",
       "strict": false,
       "skills": [
+        "./skills/gh-api-fallback",
         "./skills/git-attribution",
         "./skills/jj-workflow",
         "./skills/session-title",
