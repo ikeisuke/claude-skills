@@ -91,17 +91,20 @@ macOS (BSD) と Linux (GNU, WSL2 含む) で挙動が変わる代表パターン
   - 推奨: ポータブル POSIX awk の範囲で書く。GNU 専用機能を使うなら `gawk` を明示
 
 ### `xargs`
-- **`-r` (`--no-run-if-empty`)**: GNU 専用フラグ。macOS BSD `xargs` には `-r` がなく、**空入力でもコマンドを 1 回実行する**（POSIX 準拠の挙動）
-  - NG（macOS で空入力時に意図せず実行）: `find . -name '*.tmp' | xargs rm`
-  - **両対応の推奨形**: 空入力ガードを明示
+- **`-r` (`--no-run-if-empty`)**: GNU 専用フラグ。空入力時の挙動は OS で **逆向きに非対称**:
+  - **GNU `xargs`**: 空入力でも utility を **1 回実行**する（POSIX-2017 では implementation-defined だが GNU はこの挙動）。`-r` で抑制可能
+  - **macOS BSD `xargs`**: 空入力では utility を実行しない（man page: "the FreeBSD version of xargs does not run the utility argument on empty input"）。`-r` は互換性のため受け付けるが no-op
+  - 結果: `find ... | xargs cmd` で 0 件のとき、Linux では `cmd` が空引数で 1 回呼ばれ、macOS では呼ばれない
+  - NG（Linux で空入力時に意図せず実行）: `find . -name '*.tmp' | xargs rm`
+  - **両対応の推奨形**: NUL 区切りを使う（`xargs -0` は 0 件入力で utility を呼ばない仕様で両 OS 共通）
     ```bash
-    # find の -empty 判定 or 一時ファイル経由
-    find . -name '*.tmp' -print0 | xargs -0 -I{} rm {}
-    # もしくは前段で空チェック
+    find . -name '*.tmp' -print0 | xargs -0 rm
+    ```
+  - 別解: 前段で空チェックして両 OS で挙動を揃える
+    ```bash
     files=$(find . -name '*.tmp')
     [ -n "$files" ] && echo "$files" | xargs rm
     ```
-  - 別解: GNU coreutils の `gxargs` を Brewfile で導入し `-r` を使う
 - **`-d` (delimiter)**: GNU 専用。両対応では `-0`（NUL 区切り）+ `find -print0` / `tr` でパイプして対応
 
 ### `ls`
