@@ -92,20 +92,22 @@ macOS (BSD) と Linux (GNU, WSL2 含む) で挙動が変わる代表パターン
 
 ### `xargs`
 - **`-r` (`--no-run-if-empty`)**: GNU 専用フラグ。空入力時の挙動は OS で **逆向きに非対称**:
-  - **GNU `xargs`**: 空入力でも utility を **1 回実行**する（POSIX-2017 では implementation-defined だが GNU はこの挙動）。`-r` で抑制可能
+  - **GNU `xargs`**: 空入力でも utility を **1 回実行**する（POSIX-2017 では implementation-defined だが GNU はこの挙動）。GNU info manual: "By default, xargs runs the command once even if there is no input". `-r` で抑制可能
   - **macOS BSD `xargs`**: 空入力では utility を実行しない（man page: "the FreeBSD version of xargs does not run the utility argument on empty input"）。`-r` は互換性のため受け付けるが no-op
   - 結果: `find ... | xargs cmd` で 0 件のとき、Linux では `cmd` が空引数で 1 回呼ばれ、macOS では呼ばれない
+  - 注意: `-0` (NUL 区切り) は **delimiter を変えるだけ**で空入力ガードではない。`find ... -print0 | xargs -0 cmd` も Linux では空入力時に `cmd` が呼ばれる
   - NG（Linux で空入力時に意図せず実行）: `find . -name '*.tmp' | xargs rm`
-  - **両対応の推奨形**: NUL 区切りを使う（`xargs -0` は 0 件入力で utility を呼ばない仕様で両 OS 共通）
+  - **両対応の推奨形 1**: `find -exec ... +` を使い xargs を経由しない（`find` は 0 件で utility を呼ばないため両 OS で安全）
     ```bash
-    find . -name '*.tmp' -print0 | xargs -0 rm
+    find . -name '*.tmp' -exec rm {} +
     ```
-  - 別解: 前段で空チェックして両 OS で挙動を揃える
+  - **両対応の推奨形 2**: 前段で空チェックする
     ```bash
     files=$(find . -name '*.tmp')
-    [ -n "$files" ] && echo "$files" | xargs rm
+    [ -n "$files" ] && printf '%s\n' "$files" | xargs rm
     ```
-- **`-d` (delimiter)**: GNU 専用。両対応では `-0`（NUL 区切り）+ `find -print0` / `tr` でパイプして対応
+  - 別解: GNU 専用環境では `xargs -r`、Brew で `findutils` (GNU coreutils 系) を入れて `gxargs -r` を使う
+- **`-d` (delimiter)**: GNU 専用。両対応では `-0`（NUL 区切り）+ `find -print0` / `tr` でパイプ
 
 ### `ls`
 - **色オプション**: GNU は `--color=auto`、BSD は `-G`
