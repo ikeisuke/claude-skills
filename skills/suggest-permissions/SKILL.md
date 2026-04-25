@@ -293,6 +293,8 @@ python3 /path/to/skills/suggest-permissions/scripts/suggest-permissions.py --rev
 
 LOW（推奨事項）と INFO（情報）は出力には現れるが、終了コードはゲートしない（対応は任意のため）。
 
+`acknowledgedFindings` の JSON が破損している / セクションが配列でない 等の異常では、警告を stderr に出して suppression を無効化したうえで Review 自体は通常通り続行する（exit 2 にはならない）。これは「抑制ファイル不調で完了判定が落ちる」事態を避けるための設計。
+
 ### Acknowledged findings（既知指摘の抑制）
 
 毎回検出される偽陽性の指摘は、プロジェクトの `.claude/settings.json` に登録して Review 出力から抑制できる:
@@ -326,7 +328,12 @@ LOW（推奨事項）と INFO（情報）は出力には現れるが、終了コ
 
 **マッチング**: `pattern` と `severity` の AND 条件。両方が一致したエントリで対応する findings を抑制する。
 
-**運用上の注意**: 抑制リストは「既知安全な偽陽性」のみに使う。本物のリスクを抑制すると重大な誤検出の見落としにつながるので、`note` には抑制理由を必ず書くこと。
+**運用上の注意**:
+
+- 抑制リストは「既知安全な偽陽性」のみに使う。本物のリスクを抑制すると重大な誤検出の見落としにつながる。`note` には抑制理由を必ず書くこと。
+- `acknowledgedAt` を活用して抑制エントリの**鮮度**を追跡する。コードや設定が変わると抑制理由が古くなる場合があるので、定期的（例: 半年〜年次）に見直し、不要になったエントリは削除する。
+- `pattern` を緩めすぎない（例: `Bash(*)` のような全一致 glob は抑制の意味を失わせる）。スコープを最小に絞る。
+- 抑制を増やす前に、可能なら設定ファイル側を直す（`allow` から `ask` への移動、より狭いスコープへの変更等）。抑制は最終手段。
 
 ### 完了判定フローのリファレンス
 
@@ -336,8 +343,8 @@ LOW（推奨事項）と INFO（情報）は出力には現れるが、終了コ
 # テーブル出力で確認しつつ exit code で判定
 python3 /path/to/suggest-permissions.py --review && echo "permissions OK"
 
-# JSON で取り込む場合
-python3 /path/to/suggest-permissions.py --review --format json | jq '.remaining_issues == 0'
+# JSON で取り込む場合（jq -e で exit code を返す）
+python3 /path/to/suggest-permissions.py --review --format json | jq -e '.remaining_issues == 0' >/dev/null
 ```
 
 **プロジェクト Intent / 完了基準への書き方の例**:

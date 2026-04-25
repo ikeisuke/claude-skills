@@ -161,8 +161,16 @@ class TestRunReviewExitCodes(unittest.TestCase):
         return ns
 
     def _run_in_dir(self, tmp, args):
+        """Run run_review with cwd and HOME both pointing into the tmp sandbox.
+
+        Overriding HOME isolates global ~/.claude/ rules from the test fixture,
+        so that future tests using scope='all' don't pick up the real user's
+        global settings on the CI host.
+        """
         cwd = os.getcwd()
+        prev_home = os.environ.get("HOME")
         os.chdir(tmp)
+        os.environ["HOME"] = tmp
         out = io.StringIO()
         err = io.StringIO()
         try:
@@ -170,6 +178,10 @@ class TestRunReviewExitCodes(unittest.TestCase):
                 code = sp.run_review(args)
         finally:
             os.chdir(cwd)
+            if prev_home is None:
+                os.environ.pop("HOME", None)
+            else:
+                os.environ["HOME"] = prev_home
         return code, out.getvalue(), err.getvalue()
 
     def test_exit_0_when_no_findings(self):

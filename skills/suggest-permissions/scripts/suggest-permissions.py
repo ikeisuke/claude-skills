@@ -1127,7 +1127,8 @@ def main():
     args = parse_args()
 
     if args.review is not None:
-        return run_review(args) or 0
+        code = run_review(args)
+        return 0 if code is None else code
 
     if args.consolidate:
         run_consolidate(args)
@@ -1353,4 +1354,5 @@ def main():
 
 
 if __name__ == "__main__":
-    sys.exit(main() or 0)
+    code = main()
+    sys.exit(0 if code is None else code)
