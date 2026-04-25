@@ -17,6 +17,7 @@
       "skills": [
         "./skills/gh-api-fallback",
         "./skills/git-attribution",
+        "./skills/history-append",
         "./skills/jj-workflow",
         "./skills/session-title",
         "./skills/skill-lint",
