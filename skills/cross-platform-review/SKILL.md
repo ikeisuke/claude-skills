@@ -8,7 +8,7 @@ description: >
   Catches portability issues that shellcheck / `bash -n` cannot (BSD vs GNU
   command flags, path differences, OS branching asymmetry).
 argument-hint: "[--base {ref}] [--paths {glob}...]"
-allowed-tools: Bash(git diff:*), Bash(git rev-parse:*), Bash(git show:*), Bash(git ls-files:*)
+allowed-tools: Bash(git diff:*), Bash(git rev-parse:*), Bash(git show:*), Bash(git ls-files:*), Bash(git symbolic-ref:*), Read
 ---
 
 # Cross-Platform Review

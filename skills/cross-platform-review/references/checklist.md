@@ -22,17 +22,21 @@ macOS (BSD) と Linux (GNU, WSL2 含む) で挙動が変わる代表パターン
 ## 1. BSD / GNU コマンド差
 
 ### `sed`
-- **`sed -i`**: macOS は引数 `''` が必須。GNU は不要
+- **`sed -i`**: macOS BSD は `-i` の直後に **拡張子引数が必須**（空文字列でもよい）。GNU は引数なしを許容
   - NG: `sed -i 's/foo/bar/' file`（macOS で「extra argument」エラー）
-  - OK 両対応: `sed -i.bak 's/foo/bar/' file && rm file.bak`（バックアップ拡張子を明示）
-  - OK 両対応: `sed -i '' -e 's/foo/bar/' file`（macOS 用）／ `sed -i'' -e 's/foo/bar/' file`（一部 GNU で動く）
-  - 推奨: `gsed`（GNU sed）を Brewfile で導入し、両対応スクリプトでは GNU 互換を選ぶ
+  - NG（GNU でしか動かない）: `sed -i'' -e 's/foo/bar/' file`（BSD は `-i` の引数として `''` を取れずエラー）
+  - **両対応の推奨形**: バックアップ拡張子を明示し、後で消す
+    ```bash
+    sed -i.bak 's/foo/bar/' file && rm -f file.bak
+    ```
+  - macOS 専用なら: `sed -i '' 's/foo/bar/' file`（`-i` と `''` の間に空白が必要）
+  - 別解: `gsed`（GNU sed）を Brewfile で導入し、両対応スクリプトでは GNU 互換を選ぶ
 - **拡張正規表現**: BSD は `-E`、GNU は `-r` だが、GNU は `-E` も受け付ける → **常に `-E` を使う**
 - **`\s`, `\b` 等の Perl 拡張**: BSD では非対応。POSIX 文字クラス（`[[:space:]]` 等）に置き換える
 
 ### `date`
-- **`-d` フラグ**: GNU 専用（任意の日付文字列をパース）。macOS BSD `date` は `-d` を別の意味（DST 設定）で使う
-  - NG（macOS で動かない）: `date -d '1 day ago'`
+- **`-d` フラグ**: GNU 専用（任意の日付文字列をパース）。macOS BSD `date` は `-d` を受け付けず usage エラーになる
+  - NG（macOS で usage エラー）: `date -d '1 day ago'`
   - OK 両対応: macOS は `date -v-1d`、GNU は `date -d '1 day ago'` → OS 判定して分岐
   - 推奨: 簡単な日付なら `date +%Y-%m-%d` だけで済むよう設計を見直す
 - **タイムゾーン指定**: macOS は `TZ=Asia/Tokyo date`、GNU も同形式で動く（共通）
@@ -45,21 +49,27 @@ macOS (BSD) と Linux (GNU, WSL2 含む) で挙動が変わる代表パターン
 - もしくは OS 分岐で `stat` のフラグを切り替える
 
 ### `mktemp`
-- **テンプレート**: macOS は引数なし or `-t prefix` で `$TMPDIR` 配下に作成。GNU は `mktemp /tmp/foo.XXXXXX` のように **テンプレートが必須**
-  - NG（macOS で意図と違う挙動）: `mktemp` だけ
-  - OK 両対応: `mktemp /tmp/myapp.XXXXXX`（X が 6 個以上のテンプレートを明示）
+- **テンプレート**: macOS BSD は引数なし / `-t prefix` で `$TMPDIR` 配下にファイル作成（場所は OS 依存）。GNU は `mktemp /tmp/foo.XXXXXX` のように **テンプレートが必須**
+  - 両 OS で動くが作成先パスが揃わない: `mktemp` 単独は macOS では `$TMPDIR/tmp.XXXXXXXX` を生成、GNU は usage エラー
+  - **両対応の推奨形**: フルパステンプレートを明示する
+    ```bash
+    mktemp /tmp/myapp.XXXXXX  # X は 6 個以上
+    ```
+  - 補足: GNU の `mktemp -t prefix.XXXXXX` は GNU 専用挙動（テンプレート必須かつ `-t` で `$TMPDIR` 経由）。macOS BSD の `-t prefix` とはセマンティクスが異なる
 - **`-d` (ディレクトリ作成)**: 両対応
 
 ### `readlink`
-- **`-f` フラグ**: macOS BSD `readlink` には **`-f` がない**（一部新しめの macOS は対応）
-  - NG: `readlink -f script.sh`（古い macOS で失敗）
-  - OK 両対応:
+- **`-f` フラグ**: macOS BSD `readlink` の `-f` は環境依存（macOS 12 以降は `-f` をサポート、それ以前の Mac では未対応）。CI / 古い環境を前提にするなら避ける
+  - NG（古い macOS / 一部の最小環境で失敗）: `readlink -f script.sh`
+  - **両対応の推奨形**:
     ```bash
-    # Python 経由
+    # 1) Python 経由（最も移植性が高い）
     python3 -c 'import os, sys; print(os.path.realpath(sys.argv[1]))' "$1"
-    # or grealink (coreutils)
-    grealink -f "$1"
-    # or 自前ループ
+
+    # 2) coreutils の greadlink（Brew で `coreutils` を入れると greadlink が使える）
+    greadlink -f "$1"
+
+    # 3) シェルだけで完結させる自前ループ
     target="$1"
     while [ -L "$target" ]; do target=$(readlink "$target"); done
     ```
@@ -81,8 +91,18 @@ macOS (BSD) と Linux (GNU, WSL2 含む) で挙動が変わる代表パターン
   - 推奨: ポータブル POSIX awk の範囲で書く。GNU 専用機能を使うなら `gawk` を明示
 
 ### `xargs`
-- **`-r` (`--no-run-if-empty`)**: GNU 専用。BSD は空入力でもコマンド実行しない（デフォルトで安全）
-- **`-d` (delimiter)**: GNU 専用 → `tr` でパイプして対応
+- **`-r` (`--no-run-if-empty`)**: GNU 専用フラグ。macOS BSD `xargs` には `-r` がなく、**空入力でもコマンドを 1 回実行する**（POSIX 準拠の挙動）
+  - NG（macOS で空入力時に意図せず実行）: `find . -name '*.tmp' | xargs rm`
+  - **両対応の推奨形**: 空入力ガードを明示
+    ```bash
+    # find の -empty 判定 or 一時ファイル経由
+    find . -name '*.tmp' -print0 | xargs -0 -I{} rm {}
+    # もしくは前段で空チェック
+    files=$(find . -name '*.tmp')
+    [ -n "$files" ] && echo "$files" | xargs rm
+    ```
+  - 別解: GNU coreutils の `gxargs` を Brewfile で導入し `-r` を使う
+- **`-d` (delimiter)**: GNU 専用。両対応では `-0`（NUL 区切り）+ `find -print0` / `tr` でパイプして対応
 
 ### `ls`
 - **色オプション**: GNU は `--color=auto`、BSD は `-G`
@@ -119,7 +139,7 @@ macOS (BSD) と Linux (GNU, WSL2 含む) で挙動が変わる代表パターン
 ### システムパス
 - `/usr/local/bin`: macOS Intel デフォルト、Linux にも存在
 - `/opt/homebrew/bin`: macOS Apple Silicon
-- `/usr/bin/local`: 一部 Linux ディストリ（タイポ注意）
+- 注意: `/usr/bin/local` は **実在しないタイポパターン**。`/usr/local/bin` の打ち間違いとして混入していないか確認
 
 ### ハードコードされたパスの検出
 - `/Users/...` (macOS) や `/home/...` (Linux) を直書きしている箇所は基本的に NG
