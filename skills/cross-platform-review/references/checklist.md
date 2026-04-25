@@ -97,16 +97,17 @@ macOS (BSD) と Linux (GNU, WSL2 含む) で挙動が変わる代表パターン
   - 結果: `find ... | xargs cmd` で 0 件のとき、Linux では `cmd` が空引数で 1 回呼ばれ、macOS では呼ばれない
   - 注意: `-0` (NUL 区切り) は **delimiter を変えるだけ**で空入力ガードではない。`find ... -print0 | xargs -0 cmd` も Linux では空入力時に `cmd` が呼ばれる
   - NG（Linux で空入力時に意図せず実行）: `find . -name '*.tmp' | xargs rm`
-  - **両対応の推奨形 1**: `find -exec ... +` を使い xargs を経由しない（`find` は 0 件で utility を呼ばないため両 OS で安全）
+  - **両対応の推奨形**: `find -exec ... +` を使い xargs を経由しない（POSIX find は 0 件で utility を呼ばないため両 OS で安全。空白・改行を含むファイル名でも破綻しない）
     ```bash
     find . -name '*.tmp' -exec rm {} +
     ```
-  - **両対応の推奨形 2**: 前段で空チェックする
+  - xargs を必ず使う場合は NUL 区切りで空白・改行に対応し、空チェックを **明示的に**入れる（`-0` 自体は空入力ガードではない点に注意）:
     ```bash
-    files=$(find . -name '*.tmp')
-    [ -n "$files" ] && printf '%s\n' "$files" | xargs rm
+    # GNU/BSD 両対応: -print0 + xargs -0 + 件数チェック
+    matches=$(find . -name '*.tmp' -print0 | tr -d -c '\0' | wc -c)
+    [ "$matches" -gt 0 ] && find . -name '*.tmp' -print0 | xargs -0 rm
     ```
-  - 別解: GNU 専用環境では `xargs -r`、Brew で `findutils` (GNU coreutils 系) を入れて `gxargs -r` を使う
+  - 別解: クロスプラットフォーム不要なら GNU 環境で `xargs -r`、または Brew の `findutils` から `gxargs -r` を使う
 - **`-d` (delimiter)**: GNU 専用。両対応では `-0`（NUL 区切り）+ `find -print0` / `tr` でパイプ
 
 ### `ls`
