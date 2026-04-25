@@ -8,7 +8,7 @@ description: >
   extracting common rules across multiple ghq-managed repositories.
   Also handles "review", "レビュー", "監査", "audit", "危険な設定" for
   auditing existing permission settings for dangerous configurations.
-argument-hint: "[--project {name}] [--days {N}] [--tool {name}] [--min-count {N}] [--consolidate {ghq-prefix}...] [--review [global|project|all]]"
+argument-hint: "[--project {name}] [--days {N}] [--tool {name}] [--min-count {N}] [--consolidate {ghq-prefix}...] [--review [global|project|all]] [--show-suppressed]"
 allowed-tools: Bash(python3 *suggest-permissions.py:*), Bash(python3 ~/.claude/plugins/cache/ikeisuke-skills/tools/*/skills/suggest-permissions/*), Bash(ghq *)
 ---
 
@@ -277,8 +277,72 @@ python3 /path/to/skills/suggest-permissions/scripts/suggest-permissions.py --rev
 |------|-------------|---------|
 | `--review` | 監査スコープ: `global`（グローバルのみ）, `project`（プロジェクトのみ）, `all`（両方） | all |
 | `--format` | `table` or `json` | table |
+| `--show-suppressed` | acknowledged findings で抑制された指摘も `(suppressed)` マーカー付きで表示 | false |
 
 `--project`, `--days`, `--session` 等の通常モードオプションは Review モードでは無視される。
+
+### 終了コード
+
+呼び出し側スクリプトから `--review && echo OK` のように成否判定するため、終了コードを以下に規定する:
+
+| 状態 | exit code |
+|------|-----------|
+| 抑制後のアクションが必要な指摘（CRITICAL/HIGH/MED）が **0 件** | `0` |
+| 抑制後のアクションが必要な指摘が **1 件以上** | `1` |
+| 設定ファイル破損・異常停止（例: `--review project` 指定時に `.claude/` がない） | `2` |
+
+LOW（推奨事項）と INFO（情報）は出力には現れるが、終了コードはゲートしない（対応は任意のため）。
+
+### Acknowledged findings（既知指摘の抑制）
+
+毎回検出される偽陽性の指摘は、プロジェクトの `.claude/settings.json` に登録して Review 出力から抑制できる:
+
+```json
+{
+  "suggestPermissions": {
+    "acknowledgedFindings": [
+      {
+        "pattern": "Bash(bash -n *)",
+        "severity": "CRITICAL",
+        "note": "シンタックスチェック専用（スクリプト非実行）",
+        "acknowledgedAt": "2026-04-18"
+      },
+      {
+        "pattern": "Bash(rm /tmp/aidlc-*)",
+        "severity": "HIGH",
+        "note": "一時ファイル限定のスコープ"
+      }
+    ]
+  }
+}
+```
+
+| フィールド | 必須 | 説明 |
+|-----------|------|------|
+| `pattern` | yes | 指摘対象ルール文字列に対する **glob パターン**（`fnmatch` 相当）。前後空白はトリムされる |
+| `severity` | yes | `CRITICAL` / `HIGH` / `MED` / `LOW` / `INFO`（大文字小文字不問） |
+| `note` | no | 抑制理由のメモ |
+| `acknowledgedAt` | no | 抑制日付（任意の文字列） |
+
+**マッチング**: `pattern` と `severity` の AND 条件。両方が一致したエントリで対応する findings を抑制する。
+
+**運用上の注意**: 抑制リストは「既知安全な偽陽性」のみに使う。本物のリスクを抑制すると重大な誤検出の見落としにつながるので、`note` には抑制理由を必ず書くこと。
+
+### 完了判定フローのリファレンス
+
+呼び出し側（CI / プロジェクトの完了基準等）で本スキルを成功条件に組み込む推奨パターン:
+
+```bash
+# テーブル出力で確認しつつ exit code で判定
+python3 /path/to/suggest-permissions.py --review && echo "permissions OK"
+
+# JSON で取り込む場合
+python3 /path/to/suggest-permissions.py --review --format json | jq '.remaining_issues == 0'
+```
+
+**プロジェクト Intent / 完了基準への書き方の例**:
+
+> `tools:suggest-permissions --review` が exit 0 で終了すること。偽陽性は `.claude/settings.json` の `suggestPermissions.acknowledgedFindings` に登録してレビューから除外する。
 
 ### 検出カテゴリと重要度
 
