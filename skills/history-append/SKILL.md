@@ -7,7 +7,7 @@ description: >
   User-only: invoke explicitly via /history-append; not auto-invoked by the model.
 argument-hint: "[--commit {ref}] [--file {path}]"
 disable-model-invocation: true
-allowed-tools: Bash(git diff:*), Bash(git diff --staged:*), Bash(git log:*), Bash(git show:*), Bash(date:*)
+allowed-tools: Bash(git diff:*), Bash(git log:*), Bash(git show:*), Bash(git rev-parse:*), Bash(date:*), Read
 ---
 
 # History Append
@@ -198,3 +198,4 @@ User: `/history-append --file docs/CHANGELOG.md`
 - 既存ファイルの内容を破壊的に書き換えない（追記のみ）。改行コード・末尾改行は既存に合わせる。
 - `git add` / `git commit` は実行しない（スキルのスコープ外）。
 - 推定の根拠（どの既存セクションをサンプルにしたか）を 1 行でユーザーに示す。
+- `Edit` / `Write` ツールは `allowed-tools` に含めない。Step 6 の書き込み時に標準の permission prompt を経由させ、ユーザー承認の最終ゲートとして機能させるための設計。Step 5 の口頭承認 + Step 6 の permission prompt の二重ガードで誤書き込みを防ぐ。
