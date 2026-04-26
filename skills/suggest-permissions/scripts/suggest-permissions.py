@@ -2,6 +2,7 @@
 """Collect tool usage patterns from Claude Code session history for permission rule suggestions."""
 
 import argparse
+import fnmatch
 import json
 import os
 import re
@@ -95,6 +96,8 @@ def parse_args():
     # Review mode
     parser.add_argument("--review", nargs="?", const="all", choices=["global", "project", "all"],
                         help="Review existing settings for dangerous configurations (default: all)")
+    parser.add_argument("--show-suppressed", action="store_true",
+                        help="Show acknowledged (suppressed) findings with a (suppressed) marker")
     # Consolidate mode
     parser.add_argument("--consolidate", nargs="+", metavar="GHQ_PREFIX",
                         help="Consolidate common rules from repos matching ghq prefix(es)")
@@ -657,6 +660,94 @@ def check_ask_overrides_allow(project_rules, global_rules):
     return findings
 
 
+def load_acknowledged_findings(cwd):
+    """Load acknowledgedFindings from project-scoped .claude/settings.json.
+
+    Returns a list of normalized entries: [{pattern, severity, note, acknowledgedAt}, ...].
+
+    Failure modes (per Issue #26):
+    - settings.json missing → return []
+    - JSON parse error or top-level value not an object → warn, return []
+    - acknowledgedFindings missing or not a list → warn (only when not a list), return []
+    - individual entry missing pattern / invalid severity → warn, skip that entry
+    - note / acknowledgedAt missing or wrong type → silently treat as empty (optional fields)
+    """
+    path = Path(cwd) / ".claude" / "settings.json"
+    if not path.exists():
+        return []
+    try:
+        raw_text = path.read_text()
+    except OSError as e:
+        print(f"warning: {path}: {e}; suppression disabled", file=sys.stderr)
+        return []
+    try:
+        data = json.loads(raw_text)
+    except json.JSONDecodeError as e:
+        print(f"warning: {path}: JSON parse error: {e}; suppression disabled", file=sys.stderr)
+        return []
+    if not isinstance(data, dict):
+        return []
+    section = data.get("suggestPermissions")
+    if section is None:
+        return []
+    if not isinstance(section, dict):
+        print(f"warning: {path}: suggestPermissions is not an object; suppression disabled", file=sys.stderr)
+        return []
+    raw_list = section.get("acknowledgedFindings")
+    if raw_list is None:
+        return []
+    if not isinstance(raw_list, list):
+        print(f"warning: {path}: suggestPermissions.acknowledgedFindings is not an array; suppression disabled", file=sys.stderr)
+        return []
+
+    entries = []
+    for i, item in enumerate(raw_list):
+        if not isinstance(item, dict):
+            print(f"warning: acknowledgedFindings[{i}] is not an object; skipping", file=sys.stderr)
+            continue
+        pattern = item.get("pattern")
+        if not isinstance(pattern, str) or not pattern.strip():
+            print(f"warning: acknowledgedFindings[{i}]: missing or invalid 'pattern'; skipping", file=sys.stderr)
+            continue
+        severity = item.get("severity")
+        if not isinstance(severity, str) or severity.strip().upper() not in REVIEW_SEVERITY:
+            print(f"warning: acknowledgedFindings[{i}]: missing or invalid 'severity'; skipping", file=sys.stderr)
+            continue
+        note = item.get("note", "")
+        if not isinstance(note, str):
+            note = ""
+        ack_at = item.get("acknowledgedAt", "")
+        if not isinstance(ack_at, str):
+            ack_at = ""
+        entries.append({
+            "pattern": pattern.strip(),
+            "severity": severity.strip().upper(),
+            "note": note,
+            "acknowledgedAt": ack_at,
+        })
+    return entries
+
+
+def is_finding_acknowledged(finding, acknowledged):
+    """Match a finding against acknowledgedFindings entries.
+
+    Matching rule (per Issue #26):
+    - severity equality (case-insensitive)
+    - pattern matches finding["rule"] via fnmatch (glob); finding rule is whitespace-trimmed
+    Returns the matching entry dict or None.
+    """
+    rule = (finding.get("rule") or "").strip()
+    sev = (finding.get("severity") or "").strip().upper()
+    if not rule:
+        return None
+    for entry in acknowledged:
+        if entry["severity"] != sev:
+            continue
+        if fnmatch.fnmatchcase(rule, entry["pattern"]):
+            return entry
+    return None
+
+
 def check_missing_protections(all_deny, all_ask):
     """Check for recommended deny rules that are missing."""
     findings = []
@@ -671,7 +762,13 @@ def check_missing_protections(all_deny, all_ask):
 
 
 def run_review(args):
-    """Review existing permission settings for dangerous configurations."""
+    """Review existing permission settings for dangerous configurations.
+
+    Returns an exit code:
+        0 — no remaining (active, non-INFO) findings
+        1 — at least one remaining (active, non-INFO) finding
+        2 — abnormal stop (e.g. project scope requested but no .claude/ directory)
+    """
     scope = args.review  # "global", "project", or "all"
     cwd = os.getcwd()
 
@@ -689,7 +786,7 @@ def run_review(args):
             project_rules = empty_rules.copy()
             if scope == "project":
                 print("No .claude/ directory found in current project.", file=sys.stderr)
-                sys.exit(1)
+                return 2
     else:
         project_rules = empty_rules.copy()
 
@@ -724,9 +821,33 @@ def run_review(args):
     # Sort by severity
     findings.sort(key=lambda f: REVIEW_SEVERITY.index(f["severity"]))
 
-    # Summary counts
-    summary = {s: 0 for s in REVIEW_SEVERITY}
+    # Apply acknowledged findings suppression (project-scoped settings.json only)
+    acknowledged = load_acknowledged_findings(cwd)
     for f in findings:
+        ack = is_finding_acknowledged(f, acknowledged) if acknowledged else None
+        if ack:
+            f["suppressed"] = True
+            f["acknowledged_pattern"] = ack["pattern"]
+            f["acknowledged_note"] = ack["note"]
+            f["acknowledged_at"] = ack["acknowledgedAt"]
+        else:
+            f["suppressed"] = False
+
+    active_findings = [f for f in findings if not f["suppressed"]]
+    suppressed_findings = [f for f in findings if f["suppressed"]]
+    suppressed_count = len(suppressed_findings)
+
+    # Remaining count drives the exit code: only actionable severities (CRITICAL/HIGH/MED)
+    # gate the exit code. LOW is recommended/optional and INFO is informational, so they
+    # surface in output but do not fail the run. This lets `--review && echo OK` work
+    # without forcing every project to add every recommended deny rule.
+    actionable = {"CRITICAL", "HIGH", "MED"}
+    remaining_issues = sum(1 for f in active_findings if f["severity"] in actionable)
+
+    # Summary counts (for displayed findings)
+    display_findings = findings if args.show_suppressed else active_findings
+    summary = {s: 0 for s in REVIEW_SEVERITY}
+    for f in display_findings:
         summary[f["severity"]] += 1
 
     if args.format == "json":
@@ -735,11 +856,13 @@ def run_review(args):
                 "global": {k: dict(sorted(v.items())) if isinstance(v, dict) else sorted(v) for k, v in global_rules.items()},
                 "project": {k: dict(sorted(v.items())) if isinstance(v, dict) else sorted(v) for k, v in project_rules.items()},
             },
-            "findings": findings,
+            "findings": display_findings,
             "summary": summary,
+            "suppressed_count": suppressed_count,
+            "remaining_issues": remaining_issues,
         }
         print(json.dumps(output, indent=2, ensure_ascii=False))
-        return
+        return 0 if remaining_issues == 0 else 1
 
     # Table format
     scope_label = {"global": "global only", "project": "project only", "all": "global + project"}
@@ -753,17 +876,22 @@ def run_review(args):
         print(f"  Project (.claude/): {len(project_rules['deny'])} deny, "
               f"{len(project_rules['ask'])} ask, {len(project_rules['allow'])} allow")
 
-    if not findings:
-        print("\nNo issues found. Settings look good.")
-        return
+    if not display_findings:
+        if suppressed_count > 0 and not args.show_suppressed:
+            print(f"\nNo active issues. {suppressed_count} acknowledged finding(s) suppressed.")
+            print("(Use --show-suppressed to inspect them.)")
+        else:
+            print("\nNo issues found. Settings look good.")
+        return 0 if remaining_issues == 0 else 1
 
-    print(f"\nFindings ({sum(v for k, v in summary.items() if k != 'INFO')} issues):\n")
+    issue_count = sum(v for k, v in summary.items() if k != "INFO")
+    print(f"\nFindings ({issue_count} issues):\n")
 
     fmt = "  {:<10} {:<45} {}"
     print(fmt.format("SEV", "RULE", "MESSAGE"))
     print("  " + "-" * 108)
 
-    for f in findings:
+    for f in display_findings:
         # Build source label: e.g. [project/settings.json/allow] or [global/allow]
         if f["source"] != "-":
             file_part = f["file"].replace(".json", "") + "/" if f["file"] else ""
@@ -771,18 +899,27 @@ def run_review(args):
         else:
             source_label = ""
         rule_col = f"{f['rule'][:30]}  {source_label}" if f["rule"] else "-"
-        print(fmt.format(f["severity"], rule_col[:45], f["message"][:80]))
+        msg = f["message"]
+        if f.get("suppressed"):
+            msg = f"(suppressed) {msg}"
+        print(fmt.format(f["severity"], rule_col[:45], msg[:80]))
 
     print()
     summary_parts = [f"{summary[s]} {s.lower()}" for s in REVIEW_SEVERITY if summary[s] > 0]
     print(f"Summary: {', '.join(summary_parts)}")
 
-    # Show recommendations for HIGH+ findings
-    high_findings = [f for f in findings if f["severity"] in ("CRITICAL", "HIGH") and f["recommendation"]]
+    if suppressed_count > 0 and not args.show_suppressed:
+        print(f"\nℹ {suppressed_count}件の既知指摘を抑制しました（詳細は --show-suppressed）")
+
+    # Show recommendations for HIGH+ findings (active only)
+    high_findings = [f for f in active_findings
+                     if f["severity"] in ("CRITICAL", "HIGH") and f["recommendation"]]
     if high_findings:
         print("\nRecommendations:")
         for f in high_findings:
             print(f"  {f['rule']}: {f['recommendation']}")
+
+    return 0 if remaining_issues == 0 else 1
 
 
 def list_ghq_repos(prefixes):
@@ -990,12 +1127,12 @@ def main():
     args = parse_args()
 
     if args.review is not None:
-        run_review(args)
-        return
+        code = run_review(args)
+        return 0 if code is None else code
 
     if args.consolidate:
         run_consolidate(args)
-        return
+        return 0
 
     claude_projects = Path.home() / ".claude" / "projects"
     if not claude_projects.exists():
@@ -1213,7 +1350,9 @@ def main():
 
     new_count = sum(1 for s in suggestions if not s["already_allowed"])
     print(f"\nTotal: {len(suggestions)} patterns, {new_count} new (not yet in allow list)")
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    code = main()
+    sys.exit(0 if code is None else code)
