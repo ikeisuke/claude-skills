@@ -15,12 +15,29 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: ${{ github.head_ref }}
+          fetch-depth: 0
+
+      - name: Check if relevant files changed
+        id: paths
+        run: |
+          git fetch origin main
+          base_sha=$(git merge-base origin/main HEAD)
+          changed=$(git diff --name-only "$base_sha" HEAD)
+          echo "Changed files:"
+          echo "$changed"
+          if echo "$changed" | grep -qE '^(skills/|\.claude-plugin/)'; then
+            echo "relevant=true" >> "$GITHUB_OUTPUT"
+            echo "Relevant changes detected → bump enabled"
+          else
+            echo "relevant=false" >> "$GITHUB_OUTPUT"
+            echo "No skill/marketplace changes → bump skipped (success status will still be posted)"
+          fi
 
       - name: Check if version already bumped
         id: check
+        if: steps.paths.outputs.relevant == 'true'
         run: |
           file=".claude-plugin/marketplace.json"
-          git fetch origin main
           base_version=$(git show origin/main:"$file" | jq -r '.metadata.version')
           head_version=$(jq -r '.metadata.version' "$file")
           if [ "$base_version" != "$head_version" ]; then
@@ -32,7 +49,7 @@ jobs:
           fi
 
       - name: Bump patch version in marketplace.json
-        if: steps.check.outputs.skip == 'false'
+        if: steps.paths.outputs.relevant == 'true' && steps.check.outputs.skip == 'false'
         run: |
           file=".claude-plugin/marketplace.json"
           current=$(jq -r '.metadata.version' "$file")
@@ -42,7 +59,7 @@ jobs:
           echo "Bumped version: $current -> $new_version"
 
       - name: Commit and push
-        if: steps.check.outputs.skip == 'false'
+        if: steps.paths.outputs.relevant == 'true' && steps.check.outputs.skip == 'false'
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
@@ -54,9 +71,16 @@ jobs:
       - name: Set success status on HEAD
         run: |
           sha=$(git rev-parse HEAD)
+          if [ "${{ steps.paths.outputs.relevant }}" = "false" ]; then
+            description="No skill/marketplace changes — bump skipped"
+          elif [ "${{ steps.check.outputs.skip }}" = "true" ]; then
+            description="Version already bumped manually"
+          else
+            description="Version bump completed"
+          fi
           gh api "repos/${{ github.repository }}/statuses/${sha}" \
             -f state=success \
             -f context="Bump patch version" \
-            -f description="Version bump completed"
+            -f description="${description}"
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
