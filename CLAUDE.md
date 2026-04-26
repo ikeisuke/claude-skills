@@ -4,6 +4,8 @@
 
 main ブランチは直接 push 不可。変更は PR 経由でマージすること。
 
+新しい feature/fix ブランチを作る前は **必ず `git checkout main && git pull --ff-only`** を挟むこと。別の feature ブランチを base にしたまま `git checkout -b` すると、別 PR の作業差分が新ブランチに混入し、PR レビューと履歴を汚す（実例: PR #33 に PR #32 の README コミットが意図せず含まれてマージされた）。
+
 ## バージョン管理
 
 PRが main にマージされると、GitHub Actions が `.claude-plugin/marketplace.json` の `metadata.version` のパッチバージョンを自動で上げる。手動でのバージョン変更は不要。
